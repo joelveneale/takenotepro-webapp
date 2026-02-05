@@ -1,7 +1,7 @@
 import { loadStripe } from '@stripe/stripe-js';
 
 // Initialize Stripe - YOU'LL NEED TO REPLACE WITH YOUR PUBLISHABLE KEY
-const stripePromise = loadStripe('pk_live_51SxRqvPh0QnpAWgV4U9bHSQpVLmNRYafBuFgkQ6u8fxIDSDXm1JezhDhUe5AVpaGvDmnuoeJb9KYYBWENfST2x9Z00SeJxBh4m');
+const stripePromise = loadStripe('pk_test_51SxRr3PYNFrWcU67K18Hs8ePRdXoX2oAihPXSeDkoLeUJ3eapPIoW9SR46Pwxz3sa1Px2jRTY0mVJPu31OD8vj1J00xLjeHURb');
 
 // Get API base URL (works in dev and production)
 const API_BASE = import.meta.env.DEV 
@@ -19,7 +19,7 @@ export const createCheckoutSession = async (userId, email) => {
       body: JSON.stringify({
         userId,
         email,
-        priceId: 'price_1SxXzaPh0QnpAWgVjIwM0T0g', // Your Stripe Price ID for £4.99/year
+        priceId: 'price_1SxRvePYNFrWcU67UwPjTSkR', // Your Stripe Price ID for £4.99/year
         successUrl: `${window.location.origin}/success`,
         cancelUrl: `${window.location.origin}/pricing`,
       }),
