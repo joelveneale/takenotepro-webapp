@@ -2,14 +2,14 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
-// Firebase config - YOU'LL NEED TO REPLACE THESE WITH YOUR ACTUAL VALUES
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCT1tugf0ALJg41Cw8GgD5VYHuFJ0IgCD4",
+  authDomain: "take-note-pro.firebaseapp.com",
+  projectId: "take-note-pro",
+  storageBucket: "take-note-pro.firebasestorage.app",
+  messagingSenderId: "429731771427",
+  appId: "1:429731771427:web:fac8ca8fcbe4e1af3c6d96",
+  measurementId: "G-WD8P9CBS45"
 };
 
 // Initialize Firebase

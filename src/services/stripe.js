@@ -1,7 +1,7 @@
 import { loadStripe } from '@stripe/stripe-js';
 
 // Initialize Stripe - YOU'LL NEED TO REPLACE WITH YOUR PUBLISHABLE KEY
-const stripePromise = loadStripe('pk_test_YOUR_PUBLISHABLE_KEY');
+const stripePromise = loadStripe('pk_live_51SxRqvPh0QnpAWgV4U9bHSQpVLmNRYafBuFgkQ6u8fxIDSDXm1JezhDhUe5AVpaGvDmnuoeJb9KYYBWENfST2x9Z00SeJxBh4m');
 
 // Get API base URL (works in dev and production)
 const API_BASE = import.meta.env.DEV 
