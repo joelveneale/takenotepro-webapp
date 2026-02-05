@@ -19,7 +19,7 @@ export const createCheckoutSession = async (userId, email) => {
       body: JSON.stringify({
         userId,
         email,
-        priceId: 'price_YOUR_PRICE_ID', // Your Stripe Price ID for £4.99/year
+        priceId: 'price_1SxXzaPh0QnpAWgVjIwM0T0g', // Your Stripe Price ID for £4.99/year
         successUrl: `${window.location.origin}/success`,
         cancelUrl: `${window.location.origin}/pricing`,
       }),
