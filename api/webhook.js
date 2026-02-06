@@ -102,14 +102,18 @@ export default async function handler(req, res) {
           const userDoc = userSnapshot.docs[0];
           const userId = userDoc.id;
 
+          // Determine tier based on status
+          // Active statuses keep Pro, anything else reverts to Free
+          const tier = ['active', 'trialing'].includes(status) ? 'pro' : 'free';
+
           // Update subscription status
           await userDoc.ref.update({
             subscriptionStatus: status,
-            subscriptionTier: status === 'active' ? 'pro' : 'free',
+            subscriptionTier: tier,
             updatedAt: new Date().toISOString(),
           });
 
-          console.log(`Updated user ${userId} subscription status to: ${status}`);
+          console.log(`Updated user ${userId} subscription status to: ${status}, tier: ${tier}`);
         } else {
           console.warn(`No user found with stripeCustomerId: ${customerId}`);
         }
@@ -140,6 +144,68 @@ export default async function handler(req, res) {
           });
 
           console.log(`Reverted user ${userId} to free tier`);
+        } else {
+          console.warn(`No user found with stripeCustomerId: ${customerId}`);
+        }
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object;
+        const customerId = invoice.customer;
+
+        console.log(`Payment failed for customer: ${customerId}`);
+
+        // Find user by Stripe customer ID
+        const userSnapshot = await db.collection('users')
+          .where('stripeCustomerId', '==', customerId)
+          .limit(1)
+          .get();
+
+        if (!userSnapshot.empty) {
+          const userDoc = userSnapshot.docs[0];
+          const userId = userDoc.id;
+
+          // Update status to indicate payment issue
+          // Don't immediately downgrade - Stripe will retry
+          await userDoc.ref.update({
+            subscriptionStatus: 'past_due',
+            lastPaymentFailed: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+
+          console.log(`Marked user ${userId} subscription as past_due`);
+        } else {
+          console.warn(`No user found with stripeCustomerId: ${customerId}`);
+        }
+        break;
+      }
+
+      case 'invoice.payment_succeeded': {
+        const invoice = event.data.object;
+        const customerId = invoice.customer;
+
+        console.log(`Payment succeeded for customer: ${customerId}`);
+
+        // Find user by Stripe customer ID
+        const userSnapshot = await db.collection('users')
+          .where('stripeCustomerId', '==', customerId)
+          .limit(1)
+          .get();
+
+        if (!userSnapshot.empty) {
+          const userDoc = userSnapshot.docs[0];
+          const userId = userDoc.id;
+
+          // Ensure they're active Pro
+          await userDoc.ref.update({
+            subscriptionStatus: 'active',
+            subscriptionTier: 'pro',
+            lastPaymentSucceeded: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+
+          console.log(`Confirmed user ${userId} Pro status after successful payment`);
         } else {
           console.warn(`No user found with stripeCustomerId: ${customerId}`);
         }

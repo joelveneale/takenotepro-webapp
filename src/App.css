@@ -106,6 +106,30 @@ body {
   box-shadow: 0 0 30px rgba(0, 255, 136, 0.4);
 }
 
+.btn-manage {
+  background: #2a2a2e;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 1.125rem;
+  padding: 1rem 2rem;
+  border: 2px solid #00ff88;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  margin: 2rem 0;
+  transition: all 0.2s ease;
+  letter-spacing: 0.02em;
+}
+
+.btn-manage:hover:not(:disabled) {
+  background: rgba(0, 255, 136, 0.1);
+  transform: translateY(-2px);
+}
+
+.btn-manage:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .placeholder-note {
   background: rgba(0, 255, 136, 0.05);
   border: 1px solid rgba(0, 255, 136, 0.2);

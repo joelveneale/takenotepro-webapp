@@ -2,14 +2,32 @@ import React, { useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import Auth from './components/Auth';
 import Pricing from './components/Pricing';
+import { createPortalSession } from './services/stripe';
 import './App.css';
 
 // TODO: Import TakeNotePro component once we integrate it
 // import TakeNotePro from './components/TakeNotePro';
 
 function App() {
-  const { user, isPro, loading } = useAuth();
+  const { user, subscription, isPro, loading } = useAuth();
   const [showPricing, setShowPricing] = useState(false);
+  const [managingSubscription, setManagingSubscription] = useState(false);
+
+  const handleManageSubscription = async () => {
+    if (!subscription?.stripeCustomerId) {
+      alert('No subscription found');
+      return;
+    }
+
+    setManagingSubscription(true);
+    try {
+      await createPortalSession(subscription.stripeCustomerId);
+    } catch (error) {
+      console.error('Error opening portal:', error);
+      alert('Failed to open subscription portal. Please try again.');
+      setManagingSubscription(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -41,6 +59,16 @@ function App() {
               className="btn-upgrade"
             >
               Upgrade to Pro - £4.99/year
+            </button>
+          )}
+
+          {isPro && (
+            <button 
+              onClick={handleManageSubscription}
+              disabled={managingSubscription}
+              className="btn-manage"
+            >
+              {managingSubscription ? 'Opening...' : 'Manage Subscription'}
             </button>
           )}
 
