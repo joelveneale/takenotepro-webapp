@@ -7,19 +7,18 @@ import {
   deleteDoc, 
   query, 
   where,
-  orderBy,
-  serverTimestamp 
+  orderBy 
 } from 'firebase/firestore';
 import { db } from './firebase';
 
 // Save session to Firestore
-export const saveSession = async (userId, sessionData) => {
+export const saveSessionToFirestore = async (userId, sessionData) => {
   try {
     const sessionRef = doc(db, 'sessions', sessionData.id);
     await setDoc(sessionRef, {
       ...sessionData,
       userId,
-      updatedAt: serverTimestamp(),
+      updatedAt: new Date().toISOString(),
     }, { merge: true });
     return true;
   } catch (error) {
@@ -28,7 +27,7 @@ export const saveSession = async (userId, sessionData) => {
   }
 };
 
-// Load all user sessions
+// Load all user sessions from Firestore
 export const loadUserSessions = async (userId) => {
   try {
     const sessionsQuery = query(
@@ -44,22 +43,8 @@ export const loadUserSessions = async (userId) => {
   }
 };
 
-// Load single session
-export const loadSession = async (sessionId) => {
-  try {
-    const sessionDoc = await getDoc(doc(db, 'sessions', sessionId));
-    if (sessionDoc.exists()) {
-      return sessionDoc.data();
-    }
-    return null;
-  } catch (error) {
-    console.error('Error loading session:', error);
-    return null;
-  }
-};
-
-// Delete session
-export const deleteSession = async (sessionId) => {
+// Delete session from Firestore
+export const deleteSessionFromFirestore = async (sessionId) => {
   try {
     await deleteDoc(doc(db, 'sessions', sessionId));
     return true;

@@ -1,20 +1,174 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { saveSession, loadUserSessions, deleteSession } from '../services/sessions';
-import { logOut } from '../services/auth';
-import { Clock, Play, Pause, Plus, Settings, FileText, Mic, Download, LogOut } from 'lucide-react';
-import './TakeNotePro.css';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { jsPDF } from 'jspdf';
+import { saveSessionToFirestore, loadUserSessions, deleteSessionFromFirestore } from '../services/sessions';
 
-const TakeNotePro = ({ user, isPro, onShowPricing }) => {
-  // ==================== STATE ====================
-  
-  // Sessions
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+
+const FREE_MAX_SESSIONS = 1;
+const FREE_MAX_NOTES = 20;
+
+const DEFAULT_MICS = () => [
+  { id: 1, number: 1, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 2, number: 2, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 3, number: 3, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 4, number: 4, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 5, number: 5, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 6, number: 6, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 7, number: 7, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+  { id: 8, number: 8, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
+];
+
+const DEFAULT_METADATA = () => [
+  { id: 'production', label: 'Production', value: '', placeholder: 'e.g., Documentary 2025' },
+  { id: 'scene', label: 'Scene', value: '', placeholder: 'e.g., INT. OFFICE - DAY' },
+  { id: 'take', label: 'Take', value: '', placeholder: 'e.g., 3' },
+  { id: 'cameraName', label: 'Camera Name', value: '', placeholder: 'e.g., A-Cam' },
+  { id: 'soundRoll', label: 'Sound Roll', value: '', placeholder: 'e.g., SR001' },
+  { id: 'recordist', label: 'Recordist', value: '', placeholder: 'Your name' }
+];
+
+const FPS_OPTIONS = [
+  { value: 23.976, label: '23.976' },
+  { value: 24, label: '24' },
+  { value: 25, label: '25' },
+  { value: 29.97, label: '29.97 DF' },
+  { value: 30, label: '30' },
+  { value: 50, label: '50' },
+  { value: 59.94, label: '59.94' },
+  { value: 60, label: '60' },
+];
+
+// ─── PDF VIEWER COMPONENT ────────────────────────────────────────────────────
+
+const PdfViewer = ({ document: doc, onClose }) => {
+  const [zoomLevel, setZoomLevel] = useState(1);
+
+  const zoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 3));
+  const zoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.5));
+  const resetZoom = () => setZoomLevel(1);
+
+  if (!doc) return null;
+
+  const isPdf = doc.type?.includes('pdf');
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.95)', zIndex: 2000,
+      display: 'flex', flexDirection: 'column'
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '12px 16px', background: '#1a1a1e',
+        borderBottom: '1px solid #333',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px'
+      }}>
+        <div style={{
+          fontSize: '14px', fontWeight: '600', color: '#fff',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1
+        }}>
+          {doc.name}
+        </div>
+        <button onClick={() => {
+          // Download the file
+          const link = window.document.createElement('a');
+          link.href = doc.data;
+          link.download = doc.name;
+          window.document.body.appendChild(link);
+          link.click();
+          window.document.body.removeChild(link);
+        }} style={{
+          padding: '8px 12px', fontSize: '11px', fontWeight: '600',
+          background: '#3366ff', color: '#fff', border: 'none',
+          borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'
+        }}>
+          Download
+        </button>
+        <button onClick={onClose} style={{
+          padding: '8px 16px', fontSize: '12px', fontWeight: '600',
+          background: '#333', color: '#fff', border: 'none',
+          borderRadius: '6px', cursor: 'pointer'
+        }}>
+          Close
+        </button>
+      </div>
+
+      {/* Zoom controls */}
+      <div style={{
+        display: 'flex', justifyContent: 'center', gap: '8px', padding: '8px',
+        background: '#1a1a1e', borderBottom: '1px solid #333'
+      }}>
+        <button onClick={zoomOut} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '18px', cursor: 'pointer' }}>−</button>
+        <button onClick={resetZoom} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', minWidth: '60px', cursor: 'pointer' }}>{Math.round(zoomLevel * 100)}%</button>
+        <button onClick={zoomIn} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '18px', cursor: 'pointer' }}>+</button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '0', background: '#525659' }}>
+        {isPdf ? (
+          <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center', minHeight: '100%' }}>
+            <object data={doc.data} type="application/pdf" style={{
+              width: '100%', minHeight: '800px', border: 'none', background: '#fff'
+            }}>
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', minHeight: '400px', color: '#fff',
+                padding: '20px', textAlign: 'center', background: '#525659'
+              }}>
+                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
+                <div style={{ marginBottom: '16px' }}>PDF preview not available in your browser</div>
+                <div style={{ color: '#888', fontSize: '11px' }}>Use the Download button to open in another app</div>
+              </div>
+            </object>
+          </div>
+        ) : (
+          <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }}>
+            <img src={doc.data} alt={doc.name} style={{ width: '100%', height: 'auto', display: 'block' }} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── UPGRADE PROMPT COMPONENT ────────────────────────────────────────────────
+
+const UpgradePrompt = ({ feature, onUpgrade }) => (
+  <div style={{
+    textAlign: 'center', padding: '40px 20px',
+    background: 'linear-gradient(145deg, rgba(0,255,136,0.05), rgba(0,255,136,0.02))',
+    border: '1px dashed #00ff8844', borderRadius: '12px'
+  }}>
+    <div style={{ fontSize: '32px', marginBottom: '12px' }}>🔒</div>
+    <div style={{ fontSize: '14px', fontWeight: '600', color: '#fff', marginBottom: '8px', fontFamily: "'Outfit', sans-serif" }}>
+      {feature} is a Pro Feature
+    </div>
+    <div style={{ fontSize: '12px', color: '#888', marginBottom: '20px' }}>
+      Upgrade to Pro to unlock {feature.toLowerCase()} and more
+    </div>
+    <button onClick={onUpgrade} style={{
+      padding: '12px 32px', fontSize: '13px', fontWeight: '600',
+      background: 'linear-gradient(180deg, #00ff88 0%, #00cc6a 100%)',
+      color: '#000', border: 'none', borderRadius: '8px', cursor: 'pointer',
+      fontFamily: "'Outfit', sans-serif", letterSpacing: '0.05em'
+    }}>
+      Upgrade — £4.99/year
+    </button>
+  </div>
+);
+
+// ─── MAIN APP COMPONENT ──────────────────────────────────────────────────────
+
+const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
+  // Sessions state
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
-  const [sessionCount, setSessionCount] = useState(0);
+  const [showSessionsPanel, setShowSessionsPanel] = useState(false);
   const [newSessionName, setNewSessionName] = useState('');
-  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
-  
-  // Timecode
+  const [selectedSessionId, setSelectedSessionId] = useState(null);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+
+  // Timecode state
   const [hours, setHours] = useState(0);
   const [minutes, setMinutes] = useState(0);
   const [seconds, setSeconds] = useState(0);
@@ -22,158 +176,81 @@ const TakeNotePro = ({ user, isPro, onShowPricing }) => {
   const [fps, setFps] = useState(25);
   const [isRunning, setIsRunning] = useState(false);
   const [isEditing, setIsEditing] = useState(true);
-  
-  // Notes
+
+  // TC field editing
+  const [editingField, setEditingField] = useState(null);
+  const [editingValue, setEditingValue] = useState('');
+
+  // Metadata state
+  const [metadataFields, setMetadataFields] = useState(DEFAULT_METADATA());
+  const [newFieldName, setNewFieldName] = useState('');
+  const [editingLabelId, setEditingLabelId] = useState(null);
+  const [editingLabelValue, setEditingLabelValue] = useState('');
+
+  // Mic list state
+  const [mics, setMics] = useState(DEFAULT_MICS());
+
+  // Documents state
+  const [documents, setDocuments] = useState([]);
+  const [viewingDocument, setViewingDocument] = useState(null);
+
+  // Notes state
   const [notes, setNotes] = useState([]);
   const [quickNote, setQuickNote] = useState('');
-  const [editingNoteId, setEditingNoteId] = useState(null);
-  
-  // Metadata
-  const [metadataFields, setMetadataFields] = useState([
-    { id: 'production', label: 'Production', value: '', placeholder: 'e.g., Documentary 2025' },
-    { id: 'scene', label: 'Scene', value: '', placeholder: 'e.g., INT. OFFICE - DAY' },
-    { id: 'take', label: 'Take', value: '', placeholder: 'e.g., 3' },
-    { id: 'cameraName', label: 'Camera', value: '', placeholder: 'e.g., A-Cam' },
-  ]);
-  
-  // UI State
-  const [activeTab, setActiveTab] = useState('sessions');
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  
-  // Refs
+  const [longNote, setLongNote] = useState('');
+  const [longNoteStartTC, setLongNoteStartTC] = useState(null);
+  const [isLongNoteMode, setIsLongNoteMode] = useState(false);
+
+  // UI state
+  const [activeTab, setActiveTab] = useState('timecode');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [csvContent, setCsvContent] = useState('');
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [showMicExport, setShowMicExport] = useState(false);
+
+  // Custom note state
+  const [showCustomNote, setShowCustomNote] = useState(false);
+  const [customNoteTC, setCustomNoteTC] = useState({ h: 0, m: 0, s: 0, f: 0 });
+  const [customNoteText, setCustomNoteText] = useState('');
+
+  // Saving indicator
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
+
   const intervalRef = useRef(null);
   const quickNoteRef = useRef(null);
+  const tcOffsetRef = useRef(0);
   const saveTimeoutRef = useRef(null);
-  
-  // ==================== LOAD SESSIONS ON MOUNT ====================
-  
-  useEffect(() => {
-    loadSessions();
-  }, [user.uid]);
-  
-  const loadSessions = async () => {
-    setIsLoadingSessions(true);
-    const userSessions = await loadUserSessions(user.uid);
-    setSessions(userSessions);
-    setSessionCount(userSessions.length);
-    
-    // Load the most recent session if exists
-    if (userSessions.length > 0) {
-      loadSessionData(userSessions[0]);
-    } else {
-      // Auto-create first session for new users
-      createNewSession();
-    }
-    setIsLoadingSessions(false);
-  };
-  
-  // ==================== SESSION MANAGEMENT ====================
-  
-  const createNewSession = async () => {
-    // FREE TIER LIMIT: Check session count
-    if (!isPro && sessionCount >= 1) {
-      alert('Free tier is limited to 1 session. Upgrade to Pro for unlimited sessions!');
-      onShowPricing();
-      return;
-    }
-    
-    const today = new Date();
-    const defaultName = newSessionName.trim() || `Session ${sessionCount + 1} - ${today.toLocaleDateString()}`;
-    
-    const newSession = {
-      id: `session_${Date.now()}`,
-      name: defaultName,
-      createdAt: today.toISOString(),
-      notes: [],
-      metadata: metadataFields.map(f => ({ ...f })),
-      fps: fps,
+
+  // ─── TIMECODE ────────────────────────────────────────────────────────────
+
+  const formatTC = useCallback((h, m, s, f) => {
+    const pad = (n) => String(Math.floor(n)).padStart(2, '0');
+    const separator = fps === 29.97 || fps === 59.94 ? ';' : ':';
+    return `${pad(h)}:${pad(m)}:${pad(s)}${separator}${pad(f)}`;
+  }, [fps]);
+
+  const currentTC = formatTC(hours, minutes, seconds, frames);
+
+  const calculateTCFromTime = useCallback(() => {
+    const now = Date.now();
+    const tcMillis = now + tcOffsetRef.current;
+    const tcDate = new Date(tcMillis);
+    return {
+      h: tcDate.getHours(),
+      m: tcDate.getMinutes(),
+      s: tcDate.getSeconds(),
+      f: Math.floor((tcDate.getMilliseconds() / 1000) * fps)
     };
-    
-    // Save to Firestore
-    const saved = await saveSession(user.uid, newSession);
-    if (saved) {
-      setSessions([newSession, ...sessions]);
-      setSessionCount(sessionCount + 1);
-      setCurrentSessionId(newSession.id);
-      loadSessionData(newSession);
-      setNewSessionName('');
-      setActiveTab('notes');
-    }
-  };
-  
-  const loadSessionData = (session) => {
-    setCurrentSessionId(session.id);
-    setNotes(session.notes || []);
-    setMetadataFields(session.metadata || metadataFields);
-    setFps(session.fps || 25);
-    setActiveTab('notes');
-  };
-  
-  const saveCurrentSession = async () => {
-    if (!currentSessionId) return;
-    
-    const session = sessions.find(s => s.id === currentSessionId);
-    if (session) {
-      const updatedSession = {
-        ...session,
-        notes,
-        metadata: metadataFields,
-        fps,
-      };
-      
-      await saveSession(user.uid, updatedSession);
-      
-      // Update local state
-      setSessions(sessions.map(s => 
-        s.id === currentSessionId ? updatedSession : s
-      ));
-    }
-  };
-  
-  const handleDeleteSession = async (sessionId) => {
-    if (!confirm('Delete this session? This cannot be undone.')) return;
-    
-    const success = await deleteSession(sessionId);
-    if (success) {
-      const updatedSessions = sessions.filter(s => s.id !== sessionId);
-      setSessions(updatedSessions);
-      setSessionCount(sessionCount - 1);
-      
-      // Load another session or create new one
-      if (sessionId === currentSessionId) {
-        if (updatedSessions.length > 0) {
-          loadSessionData(updatedSessions[0]);
-        } else {
-          setCurrentSessionId(null);
-          setNotes([]);
-        }
-      }
-    }
-  };
-  
-  // Auto-save session when data changes
-  useEffect(() => {
-    if (currentSessionId) {
-      // Clear existing timeout
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-      }
-      
-      // Debounce save by 2 seconds
-      saveTimeoutRef.current = setTimeout(() => {
-        saveCurrentSession();
-      }, 2000);
-      
-      return () => {
-        if (saveTimeoutRef.current) {
-          clearTimeout(saveTimeoutRef.current);
-        }
-      };
-    }
-  }, [notes, metadataFields, fps, currentSessionId]);
-  
-  // ==================== TIMECODE ====================
-  
+  }, [fps]);
+
+  const updateTCOffset = useCallback(() => {
+    const now = Date.now();
+    const tcDate = new Date();
+    tcDate.setHours(hours, minutes, seconds, Math.floor((frames / fps) * 1000));
+    tcOffsetRef.current = tcDate.getTime() - now;
+  }, [hours, minutes, seconds, frames, fps]);
+
   // Auto-set to current time on mount
   useEffect(() => {
     const now = new Date();
@@ -181,351 +258,1442 @@ const TakeNotePro = ({ user, isPro, onShowPricing }) => {
     setMinutes(now.getMinutes());
     setSeconds(now.getSeconds());
     setFrames(0);
+    tcOffsetRef.current = 0;
+    setIsEditing(false);
+    setIsRunning(true);
   }, []);
-  
-  // Timecode runner
+
+  // TC update loop
   useEffect(() => {
-    if (isRunning && !isEditing) {
-      intervalRef.current = setInterval(() => {
-        setFrames(prev => {
-          if (prev + 1 >= fps) {
-            setSeconds(s => {
-              if (s + 1 >= 60) {
-                setMinutes(m => {
-                  if (m + 1 >= 60) {
-                    setHours(h => (h + 1) % 24);
-                    return 0;
-                  }
-                  return m + 1;
-                });
-                return 0;
-              }
-              return s + 1;
-            });
-            return 0;
-          }
-          return prev + 1;
-        });
-      }, 1000 / fps);
-      
-      return () => {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
+    if (isRunning) {
+      const frameTime = 1000 / fps;
+      const updateTC = () => {
+        const tc = calculateTCFromTime();
+        setHours(tc.h);
+        setMinutes(tc.m);
+        setSeconds(tc.s);
+        setFrames(tc.f);
       };
+      updateTC();
+      intervalRef.current = setInterval(updateTC, frameTime);
     }
-  }, [isRunning, isEditing, fps]);
-  
-  const getCurrentTimecode = () => {
-    const pad = (num) => String(num).padStart(2, '0');
-    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}:${pad(frames)}`;
-  };
-  
-  const togglePlayPause = () => {
-    if (isEditing) {
-      setIsEditing(false);
-      setIsRunning(true);
-    } else {
-      setIsRunning(!isRunning);
-    }
-  };
-  
-  // ==================== NOTES ====================
-  
-  const addQuickNote = () => {
-    // FREE TIER LIMIT: Check note count
-    if (!isPro && notes.length >= 20) {
-      alert('Free tier is limited to 20 notes per session. Upgrade to Pro for unlimited notes!');
-      onShowPricing();
-      return;
-    }
-    
-    if (!quickNote.trim()) return;
-    
-    const newNote = {
-      id: `note_${Date.now()}`,
-      timecode: getCurrentTimecode(),
-      text: quickNote.trim(),
-      timestamp: new Date().toISOString(),
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [isRunning, fps, calculateTCFromTime]);
+
+  // Resync on visibility change
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (window.document.visibilityState === 'visible' && isRunning) {
+        const tc = calculateTCFromTime();
+        setHours(tc.h); setMinutes(tc.m); setSeconds(tc.s); setFrames(tc.f);
+      }
     };
-    
-    setNotes([...notes, newNote]);
-    setQuickNote('');
-    
-    // Focus back on input
-    if (quickNoteRef.current) {
-      quickNoteRef.current.focus();
-    }
-  };
-  
-  const deleteNote = (noteId) => {
-    setNotes(notes.filter(n => n.id !== noteId));
-  };
-  
-  const updateNote = (noteId, newText) => {
-    setNotes(notes.map(n => 
-      n.id === noteId ? { ...n, text: newText } : n
-    ));
-  };
-  
-  // ==================== EXPORT ====================
-  
-  const exportToNLE = (format) => {
-    // PRO FEATURE GATE
-    if (!isPro) {
-      alert(`NLE exports are a Pro feature!\n\nUpgrade to Pro for £4.99/year to unlock:\n• EDL export\n• FCPXML export\n• TSV export\n• ALE export`);
+    window.document.addEventListener('visibilitychange', handleVisibility);
+    return () => window.document.removeEventListener('visibilitychange', handleVisibility);
+  }, [isRunning, calculateTCFromTime]);
+
+  // ─── SESSION MANAGEMENT ──────────────────────────────────────────────────
+
+  // Load sessions from Firestore on mount
+  useEffect(() => {
+    if (!user) return;
+    const loadSessions = async () => {
+      try {
+        const firestoreSessions = await loadUserSessions(user.uid);
+        if (firestoreSessions.length > 0) {
+          setSessions(firestoreSessions);
+          setCurrentSessionId(firestoreSessions[0].id);
+          // Load first session data
+          const first = firestoreSessions[0];
+          setNotes(first.notes || []);
+          setMics(first.mics || DEFAULT_MICS());
+          setMetadataFields(first.metadata || DEFAULT_METADATA());
+          if (first.fps) setFps(first.fps);
+        } else {
+          // Create initial session
+          createNewSession(true);
+        }
+      } catch (err) {
+        console.error('Error loading sessions:', err);
+        createNewSession(true);
+      }
+      setSessionsLoaded(true);
+    };
+    loadSessions();
+  }, [user]);
+
+  const createNewSession = (isFirst = false) => {
+    // Free tier check
+    if (!isFirst && !isPro && sessions.length >= FREE_MAX_SESSIONS) {
       onShowPricing();
       return;
     }
-    
-    // TODO: Implement actual export
-    alert(`${format.toUpperCase()} export coming soon!`);
-  };
-  
-  const exportPDF = () => {
-    // Basic PDF available to all
-    alert('PDF export coming soon!');
+
+    // Save current session before creating new one
+    if (currentSessionId && !isFirst) {
+      saveCurrentSession();
+    }
+
+    const today = new Date();
+    const defaultName = newSessionName.trim() || `Day ${sessions.length + 1} - ${today.toLocaleDateString()}`;
+
+    const newSession = {
+      id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name: defaultName,
+      createdAt: today.toISOString(),
+      userId: user?.uid || null,
+      notes: [],
+      mics: DEFAULT_MICS(),
+      metadata: isFirst ? DEFAULT_METADATA() : metadataFields.map(f => ({
+        ...f,
+        value: f.id === 'production' ? f.value : ''
+      })),
+      fps: fps
+    };
+
+    setSessions(prev => [newSession, ...prev]);
+    setCurrentSessionId(newSession.id);
+    setNotes([]);
+    setMics(newSession.mics);
+    if (isFirst) setMetadataFields(newSession.metadata);
+    setNewSessionName('');
+    setShowSessionsPanel(false);
+
+    // Save to Firestore
+    if (user) {
+      saveSessionToFirestore(user.uid, newSession);
+    }
   };
 
-  // ==================== RENDER ====================
-  
-  const currentSession = sessions.find(s => s.id === currentSessionId);
-  
-  if (isLoadingSessions) {
+  const saveCurrentSession = useCallback(() => {
+    if (!currentSessionId) return;
+
+    const updatedSession = {
+      id: currentSessionId,
+      notes, mics, metadata: metadataFields, fps,
+      updatedAt: new Date().toISOString()
+    };
+
+    // Update in local state
+    setSessions(prev => prev.map(s =>
+      s.id === currentSessionId ? { ...s, ...updatedSession } : s
+    ));
+
+    // Save to Firestore
+    if (user) {
+      setIsSaving(true);
+      saveSessionToFirestore(user.uid, {
+        ...sessions.find(s => s.id === currentSessionId),
+        ...updatedSession,
+        userId: user.uid
+      }).then(() => {
+        setIsSaving(false);
+        setLastSaved(new Date());
+      }).catch(() => setIsSaving(false));
+    }
+  }, [currentSessionId, notes, mics, metadataFields, fps, user, sessions]);
+
+  // Auto-save debounced
+  useEffect(() => {
+    if (!currentSessionId || !sessionsLoaded) return;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveCurrentSession();
+    }, 5000); // Save 5 seconds after last change
+    return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
+  }, [notes, mics, metadataFields, fps, currentSessionId, sessionsLoaded]);
+
+  const loadSession = (sessionId) => {
+    if (currentSessionId) saveCurrentSession();
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+      setNotes(session.notes || []);
+      setMics(session.mics || DEFAULT_MICS());
+      setMetadataFields(session.metadata || DEFAULT_METADATA());
+      if (session.fps) setFps(session.fps);
+      setCurrentSessionId(sessionId);
+    }
+    setShowSessionsPanel(false);
+  };
+
+  const deleteSession = async (sessionId) => {
+    if (sessions.length <= 1) return;
+    setSessions(prev => prev.filter(s => s.id !== sessionId));
+    if (user) deleteSessionFromFirestore(sessionId);
+    if (sessionId === currentSessionId) {
+      const remaining = sessions.filter(s => s.id !== sessionId);
+      if (remaining.length > 0) loadSession(remaining[0].id);
+    }
+  };
+
+  const renameSession = (sessionId, newName) => {
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId ? { ...s, name: newName } : s
+    ));
+    // Will be saved on next auto-save
+  };
+
+  const getCurrentSessionName = () => {
+    return sessions.find(s => s.id === currentSessionId)?.name || 'Unsaved Session';
+  };
+
+  // ─── MIC MANAGEMENT ─────────────────────────────────────────────────────
+
+  const updateMicField = (micId, field, value) => {
+    setMics(prev => prev.map(mic => mic.id === micId ? { ...mic, [field]: value } : mic));
+  };
+
+  const updateMicAssignment = (micId, index, name) => {
+    setMics(prev => prev.map(mic => {
+      if (mic.id === micId) {
+        const a = [...mic.assignments];
+        a[index] = { ...a[index], name };
+        return { ...mic, assignments: a };
+      }
+      return mic;
+    }));
+  };
+
+  const addPersonChange = (micId) => {
+    setMics(prev => prev.map(mic => {
+      if (mic.id === micId) {
+        return { ...mic, assignments: [...mic.assignments, { name: '', timecode: currentTC, image: null }] };
+      }
+      return mic;
+    }));
+  };
+
+  const removeAssignment = (micId, index) => {
+    setMics(prev => prev.map(mic => {
+      if (mic.id === micId && mic.assignments.length > 1) {
+        return { ...mic, assignments: mic.assignments.filter((_, i) => i !== index) };
+      }
+      return mic;
+    }));
+  };
+
+  const addMic = () => {
+    const maxNumber = Math.max(...mics.map(m => m.number), 0);
+    setMics(prev => [...prev, { id: Date.now(), number: maxNumber + 1, assignments: [{ name: '', timecode: null, image: null }], frequency: '' }]);
+  };
+
+  const removeMic = (micId) => { setMics(prev => prev.filter(m => m.id !== micId)); };
+
+  const handleMicImageUpload = (micId, assignmentIndex, e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      img.onload = () => {
+        try {
+          const canvas = window.document.createElement('canvas');
+          const maxSize = 200;
+          let w = img.width, h = img.height;
+          if (w > h && w > maxSize) { h = (h * maxSize) / w; w = maxSize; }
+          else if (h > maxSize) { w = (w * maxSize) / h; h = maxSize; }
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          const compressed = canvas.toDataURL('image/jpeg', 0.7);
+          setMics(prev => prev.map(mic => {
+            if (mic.id === micId) {
+              const a = [...mic.assignments];
+              a[assignmentIndex] = { ...a[assignmentIndex], image: compressed };
+              return { ...mic, assignments: a };
+            }
+            return mic;
+          }));
+        } catch (err) { alert('Error processing image. Please try a smaller image.'); }
+      };
+      img.onerror = () => alert('Error loading image.');
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+    if (e.target) e.target.value = '';
+  };
+
+  // ─── METADATA MANAGEMENT ────────────────────────────────────────────────
+
+  const updateMetadataValue = (id, value) => {
+    setMetadataFields(prev => prev.map(f => f.id === id ? { ...f, value } : f));
+  };
+
+  const updateMetadataLabel = (id, label) => {
+    setMetadataFields(prev => prev.map(f => f.id === id ? { ...f, label } : f));
+  };
+
+  const removeMetadataField = (id) => {
+    setMetadataFields(prev => prev.filter(f => f.id !== id));
+  };
+
+  const addMetadataField = () => {
+    if (newFieldName.trim()) {
+      setMetadataFields(prev => [...prev, {
+        id: `custom_${Date.now()}`, label: newFieldName.trim(),
+        value: '', placeholder: `Enter ${newFieldName.trim().toLowerCase()}...`
+      }]);
+      setNewFieldName('');
+    }
+  };
+
+  // ─── NOTES ──────────────────────────────────────────────────────────────
+
+  const handleQuickNote = () => {
+    if (!quickNote.trim()) return;
+    // Free tier check
+    if (!isPro && notes.length >= FREE_MAX_NOTES) {
+      onShowPricing();
+      return;
+    }
+    setNotes(prev => [...prev, {
+      id: Date.now(), timecodeIn: currentTC, timecodeOut: currentTC,
+      note: quickNote.trim(), type: 'quick', timestamp: new Date().toISOString()
+    }]);
+    setQuickNote('');
+  };
+
+  const startLongNote = () => { setIsLongNoteMode(true); setLongNoteStartTC(currentTC); };
+
+  const saveLongNote = () => {
+    if (longNote.trim() && longNoteStartTC) {
+      if (!isPro && notes.length >= FREE_MAX_NOTES) { onShowPricing(); return; }
+      setNotes(prev => [...prev, {
+        id: Date.now(), timecodeIn: longNoteStartTC, timecodeOut: currentTC,
+        note: longNote.trim(), type: 'long', timestamp: new Date().toISOString()
+      }]);
+    }
+    setLongNote(''); setLongNoteStartTC(null); setIsLongNoteMode(false);
+  };
+
+  const cancelLongNote = () => { setLongNote(''); setLongNoteStartTC(null); setIsLongNoteMode(false); };
+
+  const deleteNote = (id) => { setNotes(prev => prev.filter(n => n.id !== id)); };
+
+  const tcToNumber = (tc) => {
+    const parts = tc.replace(';', ':').split(':').map(Number);
+    return parts[0] * 3600000 + parts[1] * 60000 + parts[2] * 1000 + parts[3];
+  };
+
+  const addCustomNote = () => {
+    if (!customNoteText.trim()) return;
+    if (!isPro && notes.length >= FREE_MAX_NOTES) { onShowPricing(); return; }
+    const sep = fps === 29.97 || fps === 59.94 ? ';' : ':';
+    const tc = `${String(customNoteTC.h).padStart(2, '0')}:${String(customNoteTC.m).padStart(2, '0')}:${String(customNoteTC.s).padStart(2, '0')}${sep}${String(customNoteTC.f).padStart(2, '0')}`;
+    setNotes(prev => {
+      const updated = [...prev, {
+        id: Date.now(), timecodeIn: tc, timecodeOut: tc,
+        note: customNoteText.trim(), type: 'custom', timestamp: new Date().toISOString()
+      }];
+      return updated.sort((a, b) => tcToNumber(a.timecodeIn) - tcToNumber(b.timecodeIn));
+    });
+    setCustomNoteText(''); setCustomNoteTC({ h: 0, m: 0, s: 0, f: 0 }); setShowCustomNote(false);
+  };
+
+  // ─── EXPORT FUNCTIONS ───────────────────────────────────────────────────
+
+  const generateCSV = () => {
+    const headers = ['Timecode In', 'Timecode Out', 'Note', 'Type', ...metadataFields.map(f => f.label), 'FPS', 'Timestamp'];
+    const rows = notes.map(note => [
+      note.timecodeIn, note.timecodeOut,
+      `"${note.note.replace(/"/g, '""')}"`, note.type,
+      ...metadataFields.map(f => `"${f.value.replace(/"/g, '""')}"`),
+      fps, note.timestamp
+    ]);
+    setCsvContent([headers.join(','), ...rows.map(r => r.join(','))].join('\n'));
+    setShowExportModal(true);
+  };
+
+  const generateEDL = () => {
+    const prod = metadataFields.find(f => f.id === 'production')?.value || 'Untitled';
+    let edl = `TITLE: ${prod}\nFCM: ${fps === 29.97 || fps === 59.94 ? 'DROP FRAME' : 'NON-DROP FRAME'}\n\n`;
+    notes.forEach((note, i) => {
+      const num = String(i + 1).padStart(3, '0');
+      edl += `${num}  AX       V     C        ${note.timecodeIn} ${note.timecodeOut} ${note.timecodeIn} ${note.timecodeOut}\n`;
+      edl += `* FROM CLIP NAME: ${note.note.substring(0, 50)}\n* COMMENT: ${note.note}\n\n`;
+    });
+    return edl;
+  };
+
+  const generateFCPXML = () => {
+    const prod = metadataFields.find(f => f.id === 'production')?.value || 'Untitled';
+    const fpsNum = fps === 29.97 ? 30000 : fps === 23.976 ? 24000 : fps === 59.94 ? 60000 : Math.round(fps) * 1000;
+    const fpsDen = (fps === 29.97 || fps === 23.976 || fps === 59.94) ? 1001 : 1000;
+    const tcToFrames = (tc) => {
+      const [h, m, s, f] = tc.replace(';', ':').split(':').map(Number);
+      return Math.round((h * 3600 + m * 60 + s) * fps) + f;
+    };
+    const toRat = (f) => `${f * fpsDen}/${fpsNum}s`;
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n<fcpxml version="1.10">\n  <resources>\n    <format id="r1" name="FFVideoFormat${Math.round(fps)}p" frameDuration="${fpsDen}/${fpsNum}s"/>\n  </resources>\n  <library>\n    <event name="${prod} Markers">\n      <project name="${prod} Notes">\n        <sequence format="r1">\n          <spine>\n`;
+    notes.forEach(note => {
+      const sf = tcToFrames(note.timecodeIn);
+      const ef = tcToFrames(note.timecodeOut);
+      const dur = Math.max(ef - sf, 1);
+      xml += `            <marker start="${toRat(sf)}" duration="${toRat(dur)}" value="${note.note.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}"/>\n`;
+    });
+    xml += `          </spine>\n        </sequence>\n      </project>\n    </event>\n  </library>\n</fcpxml>`;
+    return xml;
+  };
+
+  const generatePremiereMarkers = () => {
+    let csv = `Marker Name\tDescription\tIn\tOut\tDuration\tMarker Type\n`;
+    notes.forEach(note => {
+      csv += `${note.note.substring(0, 50).replace(/\t/g, ' ')}\t${note.note.replace(/\t/g, ' ').replace(/\n/g, ' ')}\t${note.timecodeIn}\t${note.timecodeOut}\t00:00:00:01\tComment\n`;
+    });
+    return csv;
+  };
+
+  const generateALE = () => {
+    const prod = metadataFields.find(f => f.id === 'production')?.value || 'Untitled';
+    let ale = `Heading\nFIELD_DELIM\tTABS\nVIDEO_FORMAT\t${Math.round(fps)}p\nTAPE\t${prod}\nFPS\t${fps}\n\nColumn\nName\tStart\tEnd\tComments\tMark Type\n\nData\n`;
+    notes.forEach((note, i) => {
+      ale += `Marker_${String(i + 1).padStart(3, '0')}\t${note.timecodeIn}\t${note.timecodeOut}\t${note.note.replace(/\t/g, ' ').replace(/\n/g, ' ')}\t${note.type}\n`;
+    });
+    return ale;
+  };
+
+  // Web-native file download helper
+  const downloadFile = (content, filename, mimeType) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = window.document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    window.document.body.appendChild(link);
+    link.click();
+    window.document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(csvContent);
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    } catch (err) {
+      const textArea = window.document.getElementById('csv-preview');
+      if (textArea) { textArea.select(); window.document.execCommand('copy'); }
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    }
+  };
+
+  // ─── TC INPUT HANDLERS ──────────────────────────────────────────────────
+
+  const handleTCFocus = (fieldName) => { setEditingField(fieldName); setEditingValue(''); };
+
+  const handleTCBlur = (setter, max) => {
+    if (editingValue !== '') { setter(Math.min(parseInt(editingValue, 10) || 0, max)); }
+    setEditingField(null); setEditingValue('');
+  };
+
+  const handleTCChange = (e, setter, max) => {
+    const value = e.target.value.replace(/[^0-9]/g, '');
+    setEditingValue(value);
+    if (value.length >= 2) { setter(Math.min(parseInt(value.slice(0, 2), 10) || 0, max)); }
+  };
+
+  const syncToNow = () => {
+    const now = new Date();
+    setHours(now.getHours()); setMinutes(now.getMinutes()); setSeconds(now.getSeconds()); setFrames(0);
+  };
+
+  // ─── SHARED STYLES ─────────────────────────────────────────────────────
+
+  const S = {
+    btn: { fontFamily: 'inherit', cursor: 'pointer', border: 'none' },
+    input: {
+      width: '100%', padding: '10px', fontSize: '14px', fontFamily: 'inherit',
+      background: '#141416', border: '1px solid #333', borderRadius: '4px',
+      color: '#e8e8e8', outline: 'none', boxSizing: 'border-box'
+    },
+    label: {
+      fontSize: '10px', fontWeight: '600', letterSpacing: '0.15em',
+      textTransform: 'uppercase', color: '#666'
+    },
+    card: {
+      background: '#1a1a1e', border: '1px solid #2a2a2e', borderRadius: '6px', padding: '12px'
+    }
+  };
+
+  // ─── LOADING STATE ──────────────────────────────────────────────────────
+
+  if (!sessionsLoaded) {
     return (
-      <div className="takenote-loading">
-        <div className="loading-spinner"></div>
-        <p>Loading sessions...</p>
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'linear-gradient(180deg, #0a0a0b 0%, #121214 100%)', color: '#00ff88'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '28px', marginBottom: '12px', animation: 'pulse 1s infinite' }}>⏱</div>
+          <div style={{ fontFamily: "'Outfit', sans-serif", fontSize: '14px' }}>Loading sessions...</div>
+        </div>
+        <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
       </div>
     );
   }
-  
+
+  // ─── RENDER ─────────────────────────────────────────────────────────────
+
   return (
-    <div className="takenote-app">
-      {/* Header */}
-      <header className="app-header">
-        <div className="header-left">
-          <Clock size={24} />
-          <h1>Take Note Pro</h1>
-          {!isPro && (
-            <button onClick={onShowPricing} className="btn-upgrade-mini">
-              Upgrade to Pro
-            </button>
-          )}
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(180deg, #0a0a0b 0%, #121214 100%)',
+      color: '#e8e8e8',
+      fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+      padding: '16px',
+      paddingTop: '20px',
+      paddingBottom: '24px',
+      maxWidth: '680px',
+      margin: '0 auto',
+      overflowX: 'hidden'
+    }}>
+      {/* Google Font */}
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet" />
+
+      {/* ─── HEADER ────────────────────────────────────────────────── */}
+      <header style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: '12px', borderBottom: '1px solid #2a2a2e', paddingBottom: '12px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{
+            width: '10px', height: '10px', borderRadius: '50%',
+            background: isRunning ? '#00ff88' : '#ff4444',
+            boxShadow: isRunning ? '0 0 12px #00ff88' : '0 0 12px #ff4444',
+            animation: isRunning ? 'pulse 1s infinite' : 'none'
+          }} />
+          <h1 style={{
+            fontSize: '18px', fontWeight: '700', fontFamily: "'Outfit', sans-serif",
+            color: '#fff', margin: 0, letterSpacing: '-0.02em'
+          }}>
+            Take Note <span style={{ color: '#00ff88', fontWeight: '600' }}>Pro</span>
+          </h1>
         </div>
-        <div className="header-right">
-          <span className="user-email">{user.email}</span>
-          {isPro && <span className="pro-badge">✓ Pro</span>}
-          <button onClick={logOut} className="btn-icon" title="Sign out">
-            <LogOut size={20} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Tier badge */}
+          <span style={{
+            fontSize: '9px', fontWeight: '700', letterSpacing: '0.1em',
+            textTransform: 'uppercase', padding: '4px 8px', borderRadius: '4px',
+            background: isPro ? '#00ff88' : '#333',
+            color: isPro ? '#000' : '#888'
+          }}>
+            {isPro ? 'PRO' : 'FREE'}
+          </span>
+          {/* Save indicator */}
+          {isSaving && (
+            <span style={{ fontSize: '9px', color: '#ffaa00', letterSpacing: '0.1em' }}>Saving...</span>
+          )}
+          <div style={{ fontSize: '11px', color: '#666', letterSpacing: '0.1em', fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
+            {fps} FPS
+          </div>
+          {/* User menu */}
+          <button onClick={onLogout} style={{
+            ...S.btn, background: 'transparent', color: '#666', fontSize: '10px',
+            padding: '4px 8px', border: '1px solid #333', borderRadius: '4px'
+          }}>
+            Logout
           </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="app-body">
-        {/* Sidebar - Sessions List */}
-        <aside className="sidebar">
-          <div className="sidebar-header">
-            <h2>Sessions</h2>
-            <button onClick={createNewSession} className="btn-icon" title="New session">
-              <Plus size={20} />
+      {/* ─── SESSION BAR ───────────────────────────────────────────── */}
+      <div onClick={() => setShowSessionsPanel(true)} style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        background: '#1a1a1e', border: '1px solid #2a2a2e', borderRadius: '6px',
+        padding: '10px 14px', marginBottom: '16px', cursor: 'pointer'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '14px' }}>📁</span>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: '600', color: '#fff', fontFamily: "'Outfit', sans-serif" }}>
+              {currentSessionId ? getCurrentSessionName() : 'No Session'}
+            </div>
+            <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
+              {notes.length} notes{!isPro && ` / ${FREE_MAX_NOTES} max`} • Tap to manage sessions
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: '18px', color: '#666' }}>›</div>
+      </div>
+
+      {/* ─── TIMECODE DISPLAY ──────────────────────────────────────── */}
+      <div style={{
+        background: 'linear-gradient(145deg, #0d0d0f 0%, #18181c 100%)',
+        border: '1px solid #2a2a2e', borderRadius: '8px', padding: '24px 16px',
+        marginBottom: '16px', position: 'relative', overflow: 'hidden'
+      }}>
+        {/* Scan line effect */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.1) 2px, rgba(0,0,0,0.1) 4px)',
+          pointerEvents: 'none'
+        }} />
+
+        {isEditing ? (
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', marginBottom: '16px' }}>
+              {[
+                { value: hours, setter: setHours, max: 23, name: 'hours' },
+                { value: minutes, setter: setMinutes, max: 59, name: 'minutes' },
+                { value: seconds, setter: setSeconds, max: 59, name: 'seconds' },
+                { value: frames, setter: setFrames, max: Math.ceil(fps) - 1, name: 'frames' }
+              ].map((field, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && (
+                    <span style={{ fontSize: '36px', fontWeight: '200', color: i === 3 && (fps === 29.97 || fps === 59.94) ? '#00ff88' : '#444' }}>
+                      {i === 3 ? (fps === 29.97 || fps === 59.94 ? ';' : ':') : ':'}
+                    </span>
+                  )}
+                  <input
+                    type="text" inputMode="numeric" pattern="[0-9]*"
+                    value={editingField === field.name ? editingValue : String(field.value).padStart(2, '0')}
+                    onChange={(e) => handleTCChange(e, field.setter, field.max)}
+                    onFocus={() => handleTCFocus(field.name)}
+                    onBlur={() => handleTCBlur(field.setter, field.max)}
+                    style={{
+                      width: '60px', fontSize: '36px', fontWeight: '300',
+                      fontFamily: "'SF Mono', 'Fira Code', monospace",
+                      background: '#1a1a1e', border: `1px solid ${editingField === field.name ? '#00ff88' : '#333'}`,
+                      borderRadius: '4px', color: '#00ff88', textAlign: 'center',
+                      padding: '4px', outline: 'none', caretColor: '#00ff88'
+                    }}
+                    maxLength={2} aria-label={field.name}
+                  />
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* FPS Selector */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
+              {FPS_OPTIONS.map(option => (
+                <button key={option.value} onClick={() => setFps(option.value)} style={{
+                  ...S.btn, padding: '6px 12px', fontSize: '11px', fontFamily: 'inherit',
+                  background: fps === option.value ? '#00ff88' : 'transparent',
+                  color: fps === option.value ? '#000' : '#666',
+                  border: `1px solid ${fps === option.value ? '#00ff88' : '#333'}`,
+                  borderRadius: '4px', transition: 'all 0.15s ease'
+                }}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <button onClick={syncToNow} style={{
+              ...S.btn, width: '100%', padding: '10px', fontSize: '11px', fontWeight: '600',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              background: 'transparent', color: '#888', border: '1px dashed #444',
+              borderRadius: '6px', marginBottom: '12px'
+            }}>
+              ⟳ Sync to Current Time
+            </button>
+
+            <button onClick={() => { updateTCOffset(); setIsEditing(false); setIsRunning(true); }} style={{
+              ...S.btn, width: '100%', padding: '14px', fontSize: '13px', fontWeight: '600',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              background: 'linear-gradient(180deg, #00ff88 0%, #00cc6a 100%)',
+              color: '#000', borderRadius: '6px'
+            }}>
+              Start Timecode
             </button>
           </div>
-          
-          {!isPro && sessionCount >= 1 && (
-            <div className="tier-limit-warning">
-              <p>🔒 Free tier: 1 session max</p>
-              <button onClick={onShowPricing} className="btn-upgrade-small">
-                Upgrade for unlimited
-              </button>
+        ) : (
+          <div style={{ position: 'relative', zIndex: 1, textAlign: 'center' }}>
+            <div style={{
+              fontSize: '42px', fontWeight: '300', letterSpacing: '0.05em', color: '#00ff88',
+              textShadow: '0 0 30px rgba(0, 255, 136, 0.3)', marginBottom: '16px'
+            }}>
+              {currentTC}
             </div>
-          )}
-          
-          <div className="sessions-list">
-            {sessions.map(session => (
-              <div
-                key={session.id}
-                className={`session-item ${session.id === currentSessionId ? 'active' : ''}`}
-                onClick={() => loadSessionData(session)}
-              >
-                <div className="session-name">{session.name}</div>
-                <div className="session-meta">
-                  {session.notes?.length || 0} notes • {new Date(session.createdAt).toLocaleDateString()}
-                </div>
-                {sessions.length > 1 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteSession(session.id);
-                    }}
-                    className="btn-delete"
-                    title="Delete session"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            ))}
+            <button onClick={() => { setIsRunning(false); setIsEditing(true); }} style={{
+              ...S.btn, padding: '10px 24px', fontSize: '12px', fontWeight: '600',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              background: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '4px'
+            }}>
+              Edit TC
+            </button>
           </div>
-        </aside>
+        )}
+      </div>
 
-        {/* Main Panel */}
-        <main className="main-panel">
-          {!currentSession ? (
-            <div className="empty-state">
-              <Clock size={64} />
-              <h2>No session selected</h2>
-              <p>Create a new session to get started</p>
-              <button onClick={createNewSession} className="btn-primary">
-                <Plus size={20} />
-                Create Session
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* Session Header */}
-              <div className="session-header">
-                <input
-                  type="text"
-                  value={currentSession.name}
-                  onChange={(e) => {
-                    const updatedSessions = sessions.map(s =>
-                      s.id === currentSessionId ? { ...s, name: e.target.value } : s
-                    );
-                    setSessions(updatedSessions);
-                  }}
-                  className="session-name-input"
-                />
+      {/* ─── TAB NAVIGATION ────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', gap: '2px', marginBottom: '16px',
+        background: '#1a1a1e', padding: '4px', borderRadius: '6px'
+      }}>
+        {[
+          { id: 'timecode', label: 'Notes' },
+          { id: 'metadata', label: 'Metadata' },
+          { id: 'miclist', label: 'Mic List' },
+          { id: 'docs', label: isPro ? 'Docs' : 'Docs 🔒' },
+          { id: 'log', label: `Log (${notes.length})` }
+        ].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            ...S.btn, flex: 1, padding: '10px', fontSize: '11px', fontWeight: '600',
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+            background: activeTab === tab.id ? '#2a2a2e' : 'transparent',
+            color: activeTab === tab.id ? '#fff' : '#666',
+            borderRadius: '4px', transition: 'all 0.15s ease'
+          }}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ─── TAB CONTENT ───────────────────────────────────────────── */}
+      <div style={{
+        background: '#141416', border: '1px solid #2a2a2e', borderRadius: '8px',
+        padding: '16px', minHeight: '300px'
+      }}>
+
+        {/* ── NOTES TAB ────────────────────────────────────────────── */}
+        {activeTab === 'timecode' && (
+          <div>
+            {/* Free tier note count warning */}
+            {!isPro && notes.length >= FREE_MAX_NOTES - 5 && (
+              <div style={{
+                background: 'rgba(255,170,0,0.1)', border: '1px solid #ffaa00',
+                borderRadius: '6px', padding: '10px 12px', marginBottom: '12px',
+                fontSize: '11px', color: '#ffaa00', textAlign: 'center'
+              }}>
+                {notes.length >= FREE_MAX_NOTES
+                  ? <span>Note limit reached. <button onClick={onShowPricing} style={{ ...S.btn, background: 'none', color: '#00ff88', textDecoration: 'underline', fontSize: '11px', padding: 0 }}>Upgrade to Pro</button> for unlimited notes.</span>
+                  : `${FREE_MAX_NOTES - notes.length} notes remaining on Free tier`
+                }
               </div>
+            )}
 
-              {/* Timecode Display */}
-              <div className="timecode-section">
-                <div className="timecode-display">
-                  {getCurrentTimecode()}
+            {/* Quick Note */}
+            <div style={{ marginBottom: '20px' }}>
+              <textarea
+                ref={quickNoteRef} value={quickNote}
+                onChange={(e) => setQuickNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleQuickNote(); } }}
+                placeholder="Type a note..." disabled={isLongNoteMode}
+                style={{
+                  width: '100%', minHeight: '80px', padding: '16px', fontSize: '16px',
+                  fontFamily: 'inherit', background: '#1a1a1e', border: '2px solid #333',
+                  borderRadius: '8px', color: '#e8e8e8', outline: 'none',
+                  opacity: isLongNoteMode ? 0.5 : 1, boxSizing: 'border-box',
+                  resize: 'none', lineHeight: '1.4'
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                <div style={{ fontSize: '11px', color: '#00ff88', fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
+                  {currentTC}
                 </div>
-                <div className="timecode-controls">
-                  <button onClick={togglePlayPause} className="btn-icon-large">
-                    {isRunning ? <Pause size={24} /> : <Play size={24} />}
-                  </button>
-                  <select
-                    value={fps}
-                    onChange={(e) => setFps(Number(e.target.value))}
-                    className="fps-select"
-                    disabled={isRunning}
-                  >
-                    <option value={23.976}>23.976 fps</option>
-                    <option value={24}>24 fps</option>
-                    <option value={25}>25 fps</option>
-                    <option value={29.97}>29.97 fps</option>
-                    <option value={30}>30 fps</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Quick Note Input */}
-              <div className="quick-note-section">
-                <input
-                  ref={quickNoteRef}
-                  type="text"
-                  value={quickNote}
-                  onChange={(e) => setQuickNote(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') addQuickNote();
-                  }}
-                  placeholder="Type note and press Enter..."
-                  className="quick-note-input"
-                />
-                <button onClick={addQuickNote} className="btn-primary">
-                  <Plus size={20} />
-                  Add Note
+                <button onClick={handleQuickNote} disabled={!quickNote.trim() || isLongNoteMode} style={{
+                  ...S.btn, padding: '8px 16px', fontSize: '12px', fontWeight: '600',
+                  fontFamily: "'Outfit', sans-serif", borderRadius: '6px',
+                  background: quickNote.trim() && !isLongNoteMode ? '#00ff88' : '#333',
+                  color: quickNote.trim() && !isLongNoteMode ? '#000' : '#666',
+                  cursor: quickNote.trim() && !isLongNoteMode ? 'pointer' : 'not-allowed'
+                }}>
+                  Save Note
                 </button>
               </div>
+            </div>
 
-              {/* Free Tier Note Limit Warning */}
-              {!isPro && notes.length >= 15 && (
-                <div className="tier-limit-warning">
-                  <p>⚠️ {20 - notes.length} notes remaining (Free tier: 20 max)</p>
-                  <button onClick={onShowPricing} className="btn-upgrade-small">
+            {/* Long Note */}
+            <div style={{
+              background: isLongNoteMode ? 'rgba(255, 170, 0, 0.1)' : 'transparent',
+              border: `1px solid ${isLongNoteMode ? '#ffaa00' : '#2a2a2e'}`,
+              borderRadius: '8px', padding: '16px'
+            }}>
+              <label style={{ ...S.label, display: 'block', marginBottom: '8px', color: isLongNoteMode ? '#ffaa00' : '#666' }}>
+                Long Note {isLongNoteMode && `(Started at ${longNoteStartTC})`}
+              </label>
+
+              {!isLongNoteMode ? (
+                <button onClick={startLongNote} style={{
+                  ...S.btn, width: '100%', padding: '14px', fontSize: '12px', fontWeight: '600',
+                  letterSpacing: '0.1em', textTransform: 'uppercase',
+                  background: 'transparent', color: '#ffaa00', border: '1px dashed #ffaa00', borderRadius: '6px'
+                }}>
+                  Start Long Note
+                </button>
+              ) : (
+                <>
+                  <textarea value={longNote} onChange={(e) => setLongNote(e.target.value)}
+                    placeholder="Type your detailed note here..." autoFocus
+                    style={{
+                      width: '100%', minHeight: '120px', padding: '14px', fontSize: '14px',
+                      fontFamily: 'inherit', background: '#1a1a1e', border: '1px solid #ffaa00',
+                      borderRadius: '6px', color: '#e8e8e8', outline: 'none',
+                      resize: 'vertical', marginBottom: '12px', boxSizing: 'border-box'
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={saveLongNote} style={{
+                      ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      background: '#ffaa00', color: '#000', borderRadius: '4px'
+                    }}>
+                      Save ({longNoteStartTC} → {currentTC})
+                    </button>
+                    <button onClick={cancelLongNote} style={{
+                      ...S.btn, padding: '12px 20px', fontSize: '12px', fontWeight: '600',
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      background: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '4px'
+                    }}>
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── METADATA TAB ──────────────────────────────────────────── */}
+        {activeTab === 'metadata' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {metadataFields.map((field) => (
+              <div key={field.id} style={S.card}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  {editingLabelId === field.id ? (
+                    <input type="text" value={editingLabelValue}
+                      onChange={(e) => setEditingLabelValue(e.target.value)}
+                      onBlur={() => { if (editingLabelValue.trim()) updateMetadataLabel(field.id, editingLabelValue.trim()); setEditingLabelId(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { if (editingLabelValue.trim()) updateMetadataLabel(field.id, editingLabelValue.trim()); setEditingLabelId(null); }}}
+                      autoFocus style={{ ...S.label, background: '#141416', border: '1px solid #00ff88', borderRadius: '3px', color: '#00ff88', padding: '4px 8px', outline: 'none', width: '150px' }}
+                    />
+                  ) : (
+                    <label onClick={() => { setEditingLabelId(field.id); setEditingLabelValue(field.label); }}
+                      style={{ ...S.label, cursor: 'pointer', padding: '4px 0' }} title="Click to edit label">
+                      {field.label}
+                    </label>
+                  )}
+                  <button onClick={() => removeMetadataField(field.id)} style={{ ...S.btn, background: 'transparent', color: '#555', fontSize: '18px', padding: '0 4px', lineHeight: 1 }}>×</button>
+                </div>
+                <input type="text" value={field.value} onChange={(e) => updateMetadataValue(field.id, e.target.value)}
+                  placeholder={field.placeholder} style={S.input}
+                />
+              </div>
+            ))}
+
+            {/* Add new field */}
+            <div style={{ border: '1px dashed #333', borderRadius: '6px', padding: '12px' }}>
+              <label style={{ ...S.label, display: 'block', marginBottom: '8px', color: '#555' }}>Add Custom Field</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="text" value={newFieldName} onChange={(e) => setNewFieldName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addMetadataField(); }}
+                  placeholder="Field name..." style={{ ...S.input, flex: 1, background: '#1a1a1e' }}
+                />
+                <button onClick={addMetadataField} disabled={!newFieldName.trim()} style={{
+                  ...S.btn, padding: '10px 16px', fontSize: '12px', fontWeight: '600',
+                  background: newFieldName.trim() ? '#00ff88' : '#333',
+                  color: newFieldName.trim() ? '#000' : '#666', borderRadius: '4px',
+                  cursor: newFieldName.trim() ? 'pointer' : 'not-allowed'
+                }}>
+                  + Add
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── MIC LIST TAB ──────────────────────────────────────────── */}
+        {activeTab === 'miclist' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <button onClick={() => setShowMicExport(true)} style={{
+              ...S.btn, width: '100%', padding: '12px', fontSize: '11px', fontWeight: '600',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              background: 'linear-gradient(180deg, #3366ff 0%, #2255dd 100%)',
+              color: '#fff', borderRadius: '6px'
+            }}>
+              Export Mic List
+            </button>
+
+            {mics.map((mic) => (
+              <div key={mic.id} style={{ background: '#1a1a1e', border: '1px solid #2a2a2e', borderRadius: '8px', overflow: 'hidden' }}>
+                {/* Mic header */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderBottom: '1px solid #2a2a2e', background: '#141416' }}>
+                  <div style={{ background: '#00ff88', color: '#000', fontWeight: '700', fontSize: '14px', padding: '6px 10px', borderRadius: '4px', minWidth: '45px', textAlign: 'center' }}>
+                    {mic.number}
+                  </div>
+                  <input type="text" value={mic.frequency} onChange={(e) => updateMicField(mic.id, 'frequency', e.target.value)}
+                    placeholder="Frequency (e.g., 606.500)"
+                    style={{ flex: 1, padding: '8px', fontSize: '13px', fontFamily: "'SF Mono', 'Fira Code', monospace", background: '#1a1a1e', border: '1px solid #333', borderRadius: '4px', color: '#ffaa00', outline: 'none' }}
+                  />
+                  <button onClick={() => removeMic(mic.id)} style={{ ...S.btn, background: 'transparent', color: '#555', fontSize: '20px', padding: '0 4px', lineHeight: 1 }}>×</button>
+                </div>
+
+                {/* Assignments */}
+                <div style={{ padding: '12px' }}>
+                  {mic.assignments.map((assignment, index) => (
+                    <div key={index} style={{
+                      display: 'flex', gap: '10px', padding: '10px',
+                      marginBottom: index < mic.assignments.length - 1 ? '8px' : '12px',
+                      background: '#141416', borderRadius: '6px',
+                      border: assignment.timecode ? '1px solid #333' : '1px solid transparent'
+                    }}>
+                      {/* Photo */}
+                      <div style={{
+                        width: '50px', height: '50px', background: '#1a1a1e', border: '1px dashed #444',
+                        borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        overflow: 'hidden', flexShrink: 0, cursor: 'pointer', position: 'relative'
+                      }}>
+                        {assignment.image ? (
+                          <img src={assignment.image} alt={assignment.name || ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <span style={{ fontSize: '9px', color: '#555', textAlign: 'center' }}>+ Photo</span>
+                        )}
+                        <input type="file" accept="image/*" onChange={(e) => handleMicImageUpload(mic.id, index, e)}
+                          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
+                        />
+                      </div>
+
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <input type="text" value={assignment.name}
+                            onChange={(e) => updateMicAssignment(mic.id, index, e.target.value)}
+                            placeholder={index === 0 ? "Person name..." : "New person..."}
+                            style={{ flex: 1, padding: '8px', fontSize: '14px', fontFamily: 'inherit', background: '#1a1a1e', border: '1px solid #333', borderRadius: '4px', color: '#e8e8e8', outline: 'none' }}
+                          />
+                          {index > 0 && (
+                            <button onClick={() => removeAssignment(mic.id, index)} style={{ ...S.btn, background: 'transparent', color: '#555', fontSize: '16px', padding: '0 4px', lineHeight: 1 }}>×</button>
+                          )}
+                        </div>
+                        {assignment.timecode && (
+                          <span style={{ fontSize: '10px', fontFamily: "'SF Mono', 'Fira Code', monospace", color: '#ffaa00' }}>
+                            Changed @ {assignment.timecode}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  <button onClick={() => addPersonChange(mic.id)} style={{
+                    ...S.btn, width: '100%', padding: '8px', fontSize: '10px', fontWeight: '600',
+                    letterSpacing: '0.1em', textTransform: 'uppercase',
+                    background: 'transparent', color: '#666', border: '1px dashed #333', borderRadius: '4px'
+                  }}>
+                    + Change Person @ {currentTC}
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            <button onClick={addMic} style={{
+              ...S.btn, width: '100%', padding: '14px', fontSize: '12px', fontWeight: '600',
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              background: '#00ff88', color: '#000', borderRadius: '6px'
+            }}>
+              + Add Mic Channel
+            </button>
+          </div>
+        )}
+
+        {/* ── DOCS TAB ──────────────────────────────────────────────── */}
+        {activeTab === 'docs' && (
+          isPro ? (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ ...S.label, fontSize: '12px', margin: 0, color: '#888' }}>Documents</h3>
+                <label style={{
+                  padding: '8px 16px', fontSize: '11px', fontWeight: '600', letterSpacing: '0.08em',
+                  textTransform: 'uppercase', background: 'linear-gradient(180deg, #3366ff 0%, #2255dd 100%)',
+                  color: '#fff', borderRadius: '6px', cursor: 'pointer'
+                }}>
+                  + Add Document
+                  <input type="file" accept=".pdf,image/*" onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    if (file.size > 10 * 1024 * 1024) { alert('File too large. Please use under 10MB.'); return; }
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                      setDocuments(prev => [{
+                        id: `doc_${Date.now()}`, name: file.name, type: file.type,
+                        data: reader.result, addedAt: new Date().toISOString(), sessionId: currentSessionId
+                      }, ...prev]);
+                    };
+                    reader.readAsDataURL(file);
+                    e.target.value = '';
+                  }} style={{ display: 'none' }} />
+                </label>
+              </div>
+
+              <p style={{ fontSize: '11px', color: '#666', marginBottom: '16px' }}>
+                Upload call sheets, schedules, or script pages for quick reference.
+              </p>
+
+              {documents.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 20px', color: '#555' }}>
+                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
+                  <div style={{ fontSize: '13px' }}>No documents yet</div>
+                  <div style={{ fontSize: '11px', color: '#444', marginTop: '4px' }}>Add a call sheet or schedule to reference during your session</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {documents.map(doc => (
+                    <div key={doc.id} style={{ ...S.card, display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{
+                        width: '40px', height: '40px', borderRadius: '6px', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', color: '#fff',
+                        background: doc.type?.includes('pdf') ? '#ff4444' : '#3366ff'
+                      }}>
+                        {doc.type?.includes('pdf') ? 'PDF' : 'IMG'}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.name}</div>
+                        <div style={{ fontSize: '10px', color: '#666' }}>Added {new Date(doc.addedAt).toLocaleDateString()}</div>
+                      </div>
+                      <button onClick={() => setViewingDocument(doc)} style={{
+                        ...S.btn, padding: '8px 12px', fontSize: '10px', fontWeight: '600',
+                        letterSpacing: '0.05em', textTransform: 'uppercase',
+                        background: '#2a2a2e', color: '#fff', borderRadius: '4px'
+                      }}>View</button>
+                      <button onClick={() => { if (confirm('Delete this document?')) setDocuments(prev => prev.filter(d => d.id !== doc.id)); }}
+                        style={{ ...S.btn, padding: '8px', fontSize: '14px', background: 'transparent', color: '#666' }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <UpgradePrompt feature="Documents" onUpgrade={onShowPricing} />
+          )
+        )}
+
+        {/* ── LOG TAB ───────────────────────────────────────────────── */}
+        {activeTab === 'log' && (
+          <div>
+            {/* Custom note button */}
+            <div style={{ marginBottom: '16px' }}>
+              {!showCustomNote ? (
+                <button onClick={() => { setShowCustomNote(true); setCustomNoteTC({ h: hours, m: minutes, s: seconds, f: frames }); }} style={{
+                  ...S.btn, width: '100%', padding: '12px', fontSize: '11px', fontWeight: '600',
+                  letterSpacing: '0.1em', textTransform: 'uppercase',
+                  background: 'transparent', color: '#9966ff', border: '1px dashed #9966ff', borderRadius: '6px'
+                }}>
+                  + Add Custom Note (Retrospective)
+                </button>
+              ) : (
+                <div style={{ background: 'rgba(153, 102, 255, 0.1)', border: '1px solid #9966ff', borderRadius: '8px', padding: '16px' }}>
+                  <label style={{ ...S.label, display: 'block', marginBottom: '10px', color: '#9966ff' }}>Custom Timecode</label>
+
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', marginBottom: '12px' }}>
+                    {[
+                      { key: 'h', value: customNoteTC.h, max: 23 },
+                      { key: 'm', value: customNoteTC.m, max: 59 },
+                      { key: 's', value: customNoteTC.s, max: 59 },
+                      { key: 'f', value: customNoteTC.f, max: Math.ceil(fps) - 1 }
+                    ].map((field, i) => (
+                      <React.Fragment key={field.key}>
+                        {i > 0 && (
+                          <span style={{ fontSize: '24px', fontWeight: '200', color: i === 3 && (fps === 29.97 || fps === 59.94) ? '#9966ff' : '#444' }}>
+                            {i === 3 ? (fps === 29.97 || fps === 59.94 ? ';' : ':') : ':'}
+                          </span>
+                        )}
+                        <input type="text" inputMode="numeric"
+                          value={String(field.value).padStart(2, '0')}
+                          onChange={(e) => { const val = parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0; setCustomNoteTC(prev => ({ ...prev, [field.key]: Math.min(val, field.max) })); }}
+                          onFocus={(e) => e.target.select()}
+                          style={{ width: '44px', fontSize: '24px', fontWeight: '300', fontFamily: "'SF Mono', 'Fira Code', monospace", background: '#1a1a1e', border: '1px solid #9966ff', borderRadius: '4px', color: '#9966ff', textAlign: 'center', padding: '4px', outline: 'none' }}
+                          maxLength={2}
+                        />
+                      </React.Fragment>
+                    ))}
+                  </div>
+
+                  <textarea value={customNoteText} onChange={(e) => setCustomNoteText(e.target.value)}
+                    placeholder="Enter your note..."
+                    style={{ width: '100%', minHeight: '80px', padding: '12px', fontSize: '14px', fontFamily: 'inherit', background: '#1a1a1e', border: '1px solid #333', borderRadius: '6px', color: '#e8e8e8', outline: 'none', resize: 'vertical', marginBottom: '12px', boxSizing: 'border-box' }}
+                  />
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={addCustomNote} disabled={!customNoteText.trim()} style={{
+                      ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      background: customNoteText.trim() ? '#9966ff' : '#333',
+                      color: customNoteText.trim() ? '#fff' : '#666', borderRadius: '4px',
+                      cursor: customNoteText.trim() ? 'pointer' : 'not-allowed'
+                    }}>Add Note</button>
+                    <button onClick={() => { setShowCustomNote(false); setCustomNoteText(''); }} style={{
+                      ...S.btn, padding: '12px 20px', fontSize: '12px', fontWeight: '600',
+                      letterSpacing: '0.1em', textTransform: 'uppercase',
+                      background: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '4px'
+                    }}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {notes.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#555', padding: '40px 20px', fontSize: '13px' }}>
+                No notes yet. Add notes from the Notes tab.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {notes.map((note, index) => (
+                  <div key={note.id} style={{
+                    ...S.card, borderLeft: `3px solid ${note.type === 'quick' ? '#00ff88' : note.type === 'custom' ? '#9966ff' : '#ffaa00'}`
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '12px', fontFamily: 'inherit', color: note.type === 'quick' ? '#00ff88' : note.type === 'custom' ? '#9966ff' : '#ffaa00' }}>
+                        {note.timecodeIn}
+                        {note.timecodeIn !== note.timecodeOut && <span style={{ color: '#666' }}> → {note.timecodeOut}</span>}
+                      </div>
+                      <button onClick={() => deleteNote(note.id)} style={{ ...S.btn, background: 'transparent', color: '#666', fontSize: '16px', padding: '0 4px', lineHeight: 1 }}>×</button>
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#ccc', lineHeight: '1.5' }}>{note.note}</div>
+                    <div style={{ fontSize: '9px', color: '#444', marginTop: '6px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                      {note.type} note • #{index + 1}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {notes.length > 0 && (
+              <button onClick={generateCSV} style={{
+                ...S.btn, width: '100%', marginTop: '16px', padding: '14px', fontSize: '12px',
+                fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: 'linear-gradient(180deg, #3366ff 0%, #2255dd 100%)',
+                color: '#fff', borderRadius: '6px'
+              }}>
+                Export CSV
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ─── EXPORT MODAL ──────────────────────────────────────────── */}
+      {showExportModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', padding: '20px', zIndex: 1000
+        }}>
+          <div style={{
+            background: '#1a1a1e', border: '1px solid #333', borderRadius: '12px',
+            padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column'
+          }}>
+            <h3 style={{ ...S.label, fontSize: '14px', color: '#fff', marginBottom: '20px', marginTop: 0 }}>Export Log</h3>
+
+            <div style={{ background: '#141416', border: '1px solid #2a2a2e', borderRadius: '6px', padding: '16px', marginBottom: '16px', fontSize: '12px', color: '#888' }}>
+              <div style={{ marginBottom: '8px' }}><strong style={{ color: '#ccc' }}>{notes.length}</strong> notes will be exported</div>
+              {metadataFields.filter(f => f.value).slice(0, 3).map(f => <div key={f.id}>{f.label}: {f.value}</div>)}
+              <div>Frame Rate: {fps} FPS</div>
+            </div>
+
+            <textarea id="csv-preview" readOnly value={csvContent} style={{
+              background: '#0a0a0b', border: '1px solid #2a2a2e', borderRadius: '6px',
+              padding: '12px', marginBottom: '16px', fontSize: '10px',
+              fontFamily: "'SF Mono', 'Fira Code', monospace", color: '#888',
+              overflow: 'auto', minHeight: '150px', maxHeight: '200px', whiteSpace: 'pre',
+              width: '100%', boxSizing: 'border-box', resize: 'none'
+            }} onFocus={(e) => e.target.select()} />
+
+            <div style={{ display: 'flex', gap: '8px', flexDirection: 'column' }}>
+              {/* Download CSV */}
+              <button onClick={() => {
+                const prod = metadataFields.find(f => f.id === 'production')?.value || 'notes';
+                downloadFile(csvContent, `${prod.replace(/[^a-zA-Z0-9]/g, '_')}_log_${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
+              }} style={{
+                ...S.btn, width: '100%', padding: '14px', fontSize: '12px', fontWeight: '600',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: 'linear-gradient(180deg, #00ff88 0%, #00cc6a 100%)', color: '#000', borderRadius: '6px'
+              }}>
+                Download CSV
+              </button>
+
+              {/* NLE Exports — Pro only */}
+              {isPro ? (
+                <div style={{ borderTop: '1px solid #333', marginTop: '8px', paddingTop: '16px' }}>
+                  <p style={{ ...S.label, textAlign: 'center', marginBottom: '12px', marginTop: 0, fontSize: '10px', color: '#888' }}>Export for NLE</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    {[
+                      { label: '📋 EDL (Universal)', fn: generateEDL, ext: 'edl', mime: 'text/plain' },
+                      { label: '🎬 Final Cut Pro', fn: generateFCPXML, ext: 'fcpxml', mime: 'application/xml' },
+                      { label: '🎞️ Premiere Pro', fn: generatePremiereMarkers, ext: 'tsv', mime: 'text/tab-separated-values' },
+                      { label: '🎛️ Avid (ALE)', fn: generateALE, ext: 'ale', mime: 'text/plain' },
+                    ].map(item => (
+                      <button key={item.ext} onClick={() => {
+                        const prod = metadataFields.find(f => f.id === 'production')?.value || 'notes';
+                        downloadFile(item.fn(), `${prod.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.${item.ext}`, item.mime);
+                      }} style={{
+                        ...S.btn, padding: '12px 8px', fontSize: '10px', fontWeight: '600',
+                        letterSpacing: '0.05em', textTransform: 'uppercase',
+                        background: '#2a2a2e', color: '#fff', borderRadius: '6px'
+                      }}>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ borderTop: '1px solid #333', marginTop: '8px', paddingTop: '16px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>NLE exports (EDL, FCPXML, Premiere, Avid) available with Pro</p>
+                  <button onClick={onShowPricing} style={{
+                    ...S.btn, padding: '10px 24px', fontSize: '11px', fontWeight: '600',
+                    background: 'transparent', color: '#00ff88', border: '1px solid #00ff88',
+                    borderRadius: '6px'
+                  }}>
                     Upgrade to Pro
                   </button>
                 </div>
               )}
 
-              {/* Notes List */}
-              <div className="notes-section">
-                <div className="notes-header">
-                  <h3>Notes ({notes.length})</h3>
-                </div>
-                <div className="notes-list">
-                  {notes.length === 0 ? (
-                    <div className="empty-notes">
-                      <p>No notes yet. Add your first note above!</p>
-                    </div>
-                  ) : (
-                    notes.map(note => (
-                      <div key={note.id} className="note-item">
-                        <div className="note-timecode">{note.timecode}</div>
-                        {editingNoteId === note.id ? (
-                          <input
-                            type="text"
-                            value={note.text}
-                            onChange={(e) => updateNote(note.id, e.target.value)}
-                            onBlur={() => setEditingNoteId(null)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') setEditingNoteId(null);
-                            }}
-                            className="note-edit-input"
-                            autoFocus
-                          />
-                        ) : (
-                          <div
-                            className="note-text"
-                            onClick={() => setEditingNoteId(note.id)}
-                          >
-                            {note.text}
-                          </div>
-                        )}
-                        <button
-                          onClick={() => deleteNote(note.id)}
-                          className="btn-delete-note"
-                          title="Delete note"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
+              <button onClick={copyToClipboard} style={{
+                ...S.btn, width: '100%', padding: '14px', fontSize: '12px', fontWeight: '600',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: copyFeedback ? '#00ff88' : '#2a2a2e',
+                color: copyFeedback ? '#000' : '#fff', borderRadius: '6px', marginTop: '8px',
+                transition: 'all 0.2s ease'
+              }}>
+                {copyFeedback ? '✓ Copied!' : 'Copy to Clipboard'}
+              </button>
+
+              <button onClick={() => setShowExportModal(false)} style={{
+                ...S.btn, padding: '12px 20px', fontSize: '12px', fontWeight: '600',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '6px'
+              }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MIC LIST EXPORT MODAL ─────────────────────────────────── */}
+      {showMicExport && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', padding: '20px', zIndex: 1000
+        }}>
+          <div style={{
+            background: '#1a1a1e', border: '1px solid #333', borderRadius: '12px',
+            padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '85vh',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column'
+          }}>
+            <h3 style={{ ...S.label, fontSize: '14px', color: '#fff', marginBottom: '16px', marginTop: 0 }}>Export Mic List</h3>
+
+            {/* Preview */}
+            <div style={{ flex: 1, overflow: 'auto', background: '#fff', borderRadius: '6px', padding: '16px', marginBottom: '16px', color: '#000', fontSize: '12px' }}>
+              <h2 style={{ fontSize: '18px', margin: '0 0 4px 0', color: '#000' }}>Radio Mic List</h2>
+              <div style={{ color: '#666', marginBottom: '16px', fontSize: '11px' }}>
+                {metadataFields.find(f => f.id === 'production')?.value || 'Production'} • {new Date().toLocaleDateString()}
               </div>
 
-              {/* Export Section */}
-              <div className="export-section">
-                <button onClick={exportPDF} className="btn-export">
-                  <Download size={18} />
-                  Export PDF
-                </button>
-                <button
-                  onClick={() => exportToNLE('edl')}
-                  className="btn-export"
-                  disabled={!isPro}
-                >
-                  <Download size={18} />
-                  Export EDL {!isPro && '🔒'}
-                </button>
-                <button
-                  onClick={() => exportToNLE('fcpxml')}
-                  className="btn-export"
-                  disabled={!isPro}
-                >
-                  <Download size={18} />
-                  Export FCPXML {!isPro && '🔒'}
-                </button>
+              {mics.filter(mic => mic.assignments.some(a => a.name) || mic.frequency).length > 0 ? (
+                mics.filter(mic => mic.assignments.some(a => a.name) || mic.frequency).map(mic => (
+                  <div key={mic.id} style={{ border: '1px solid #ddd', borderRadius: '6px', marginBottom: '10px', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f5f5f5', borderBottom: '1px solid #ddd' }}>
+                      <span style={{ background: '#000', color: '#fff', fontWeight: '700', fontSize: '11px', padding: '3px 6px', borderRadius: '3px' }}>CH {mic.number}</span>
+                      <span style={{ fontFamily: 'monospace', color: '#666', fontSize: '10px' }}>{mic.frequency}</span>
+                    </div>
+                    {mic.assignments.filter(a => a.name).map((assignment, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '10px', padding: '10px 12px', borderTop: i > 0 ? '1px solid #eee' : 'none', alignItems: 'center' }}>
+                        {assignment.image ? (
+                          <img src={assignment.image} alt={assignment.name} style={{ width: '36px', height: '36px', borderRadius: '4px', objectFit: 'cover', flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: '36px', height: '36px', borderRadius: '4px', background: '#f0f0f0', flexShrink: 0 }} />
+                        )}
+                        <div>
+                          <strong style={{ fontSize: '12px' }}>{assignment.name}</strong>
+                          {assignment.timecode && <div style={{ fontFamily: 'monospace', fontSize: '9px', color: '#888' }}>Changed @ {assignment.timecode}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <div style={{ color: '#888', textAlign: 'center', padding: '20px' }}>No mic data to export.</div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', flexDirection: 'column' }}>
+              <button onClick={() => {
+                try {
+                  const prod = metadataFields.find(f => f.id === 'production')?.value || 'mic-list';
+                  const date = new Date().toLocaleDateString();
+                  const filename = `${prod.replace(/[^a-zA-Z0-9]/g, '_')}_mic_list_${new Date().toISOString().split('T')[0]}.pdf`;
+                  const pdf = new jsPDF();
+                  let yPos = 20;
+                  const pageHeight = pdf.internal.pageSize.height;
+                  const margin = 15;
+
+                  pdf.setFontSize(22); pdf.setFont('helvetica', 'bold');
+                  pdf.text('Radio Mic List', margin, yPos); yPos += 8;
+                  pdf.setFontSize(11); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(100);
+                  pdf.text(`${prod} • ${date}`, margin, yPos); pdf.setTextColor(0); yPos += 15;
+
+                  for (const mic of mics) {
+                    if (!mic.assignments.some(a => a.name) && !mic.frequency) continue;
+                    if (yPos > pageHeight - 60) { pdf.addPage(); yPos = 20; }
+
+                    pdf.setFillColor(245, 245, 245);
+                    pdf.rect(margin, yPos - 5, pdf.internal.pageSize.width - margin * 2, 12, 'F');
+                    pdf.setFillColor(0);
+                    pdf.roundedRect(margin + 2, yPos - 4, 22, 10, 2, 2, 'F');
+                    pdf.setTextColor(255); pdf.setFontSize(10); pdf.setFont('helvetica', 'bold');
+                    pdf.text(`CH ${mic.number}`, margin + 5, yPos + 3);
+                    pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
+                    if (mic.frequency) pdf.text(mic.frequency, margin + 30, yPos + 3);
+                    pdf.setTextColor(0); yPos += 14;
+
+                    for (const assignment of mic.assignments) {
+                      if (!assignment.name) continue;
+                      if (yPos > pageHeight - 40) { pdf.addPage(); yPos = 20; }
+                      if (assignment.image) {
+                        try { pdf.addImage(assignment.image, 'JPEG', margin + 2, yPos, 15, 15); } catch (e) { pdf.setFillColor(238); pdf.rect(margin + 2, yPos, 15, 15, 'F'); }
+                      } else { pdf.setFillColor(238, 238, 238); pdf.rect(margin + 2, yPos, 15, 15, 'F'); }
+                      pdf.setFontSize(12); pdf.setFont('helvetica', 'bold'); pdf.setTextColor(0);
+                      pdf.text(assignment.name, margin + 22, yPos + 6);
+                      if (assignment.timecode) { pdf.setFontSize(9); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(130); pdf.text(`Changed @ ${assignment.timecode}`, margin + 22, yPos + 12); pdf.setTextColor(0); }
+                      yPos += 20;
+                    }
+                    yPos += 5;
+                  }
+
+                  pdf.save(filename);
+                } catch (err) { console.error('PDF error:', err); alert('Error generating PDF.'); }
+              }} style={{
+                ...S.btn, width: '100%', padding: '14px', fontSize: '12px', fontWeight: '600',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: 'linear-gradient(180deg, #00ff88 0%, #00cc6a 100%)', color: '#000', borderRadius: '6px'
+              }}>
+                Download PDF
+              </button>
+
+              <button onClick={() => setShowMicExport(false)} style={{
+                ...S.btn, padding: '12px 20px', fontSize: '12px', fontWeight: '600',
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '6px'
+              }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── SESSIONS PANEL ────────────────────────────────────────── */}
+      {showSessionsPanel && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', padding: '20px', zIndex: 1000
+        }}>
+          <div style={{
+            background: '#1a1a1e', border: '1px solid #333', borderRadius: '12px',
+            padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ ...S.label, fontSize: '14px', color: '#fff', margin: 0 }}>Sessions</h3>
+              <button onClick={() => setShowSessionsPanel(false)} style={{ ...S.btn, background: 'transparent', color: '#888', fontSize: '18px', padding: '0 4px', lineHeight: 1 }}>×</button>
+            </div>
+
+            {/* New session */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <input type="text" value={newSessionName} onChange={(e) => setNewSessionName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') createNewSession(); }}
+                placeholder="New session name..."
+                style={{ ...S.input, flex: 1, background: '#141416' }}
+              />
+              <button onClick={() => createNewSession()} style={{
+                ...S.btn, padding: '10px 16px', fontSize: '12px', fontWeight: '600',
+                background: '#00ff88', color: '#000', borderRadius: '4px',
+                opacity: (!isPro && sessions.length >= FREE_MAX_SESSIONS) ? 0.5 : 1
+              }}>
+                + New
+              </button>
+            </div>
+
+            {!isPro && sessions.length >= FREE_MAX_SESSIONS && (
+              <div style={{
+                background: 'rgba(255,170,0,0.1)', border: '1px solid #ffaa00',
+                borderRadius: '6px', padding: '10px 12px', marginBottom: '12px',
+                fontSize: '11px', color: '#ffaa00', textAlign: 'center'
+              }}>
+                Free tier: {FREE_MAX_SESSIONS} session max. <button onClick={onShowPricing} style={{ ...S.btn, background: 'none', color: '#00ff88', textDecoration: 'underline', fontSize: '11px', padding: 0 }}>Upgrade to Pro</button>
               </div>
-            </>
-          )}
-        </main>
-      </div>
+            )}
+
+            {/* Session list */}
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              {sessions.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#555', padding: '20px' }}>No sessions yet</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {sessions.map(session => {
+                    const isActive = session.id === currentSessionId;
+                    const isSelected = session.id === selectedSessionId;
+                    return (
+                      <div key={session.id} onClick={() => setSelectedSessionId(isSelected ? null : session.id)} style={{
+                        ...S.card, cursor: 'pointer',
+                        border: `1px solid ${isActive ? '#00ff88' : isSelected ? '#555' : '#2a2a2e'}`
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontSize: '13px', fontWeight: '600', color: '#fff', fontFamily: "'Outfit', sans-serif" }}>
+                              {isActive && <span style={{ color: '#00ff88', marginRight: '6px' }}>●</span>}
+                              {session.name}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#666', marginTop: '4px' }}>
+                              {(session.notes || []).length} notes • {new Date(session.createdAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#666' }}>{isSelected ? '▾' : '›'}</div>
+                        </div>
+
+                        {isSelected && (
+                          <div style={{ display: 'flex', borderTop: '1px solid #2a2a2e', marginTop: '12px' }}>
+                            <button onClick={(e) => { e.stopPropagation(); if (!isActive) loadSession(session.id); }}
+                              disabled={isActive} style={{
+                                ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
+                                fontFamily: "'Outfit', sans-serif",
+                                background: isActive ? 'transparent' : '#00ff88',
+                                color: isActive ? '#666' : '#000',
+                                borderRight: '1px solid #2a2a2e',
+                                cursor: isActive ? 'default' : 'pointer'
+                              }}>
+                              {isActive ? 'Active' : 'Load'}
+                            </button>
+                            <button onClick={(e) => {
+                              e.stopPropagation();
+                              const name = prompt('Rename session:', session.name);
+                              if (name?.trim()) renameSession(session.id, name.trim());
+                            }} style={{
+                              ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
+                              fontFamily: "'Outfit', sans-serif",
+                              background: 'transparent', color: '#888', borderRight: '1px solid #2a2a2e'
+                            }}>Rename</button>
+                            <button onClick={(e) => {
+                              e.stopPropagation();
+                              if (sessions.length > 1 && confirm('Delete session?')) { deleteSession(session.id); setSelectedSessionId(null); }
+                              else if (sessions.length <= 1) alert('Cannot delete the only session.');
+                            }} style={{
+                              ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
+                              fontFamily: "'Outfit', sans-serif",
+                              background: 'transparent', color: '#ff6666'
+                            }}>Delete</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DOCUMENT VIEWER ───────────────────────────────────────── */}
+      {viewingDocument && (
+        <PdfViewer document={viewingDocument} onClose={() => setViewingDocument(null)} />
+      )}
+
+      {/* ─── ANIMATIONS ────────────────────────────────────────────── */}
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
     </div>
   );
 };
