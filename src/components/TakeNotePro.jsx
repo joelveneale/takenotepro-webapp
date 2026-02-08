@@ -1325,7 +1325,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
 
                                          {notes.length > 0 && (
               <button onClick={generateCSV} style={{
-                ...S.btn, width: '100%', marginTop: '16px', padding: '14px', fontSize: '12px',
+                ...S.btn, width: '100%', marginTop: '16px', marginBottom: '10px', padding: '14px', fontSize: '12px',
                 fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase',
                 background: 'linear-gradient(180deg, #3366ff 0%, #2255dd 100%)',
                 color: '#fff', borderRadius: '6px'
