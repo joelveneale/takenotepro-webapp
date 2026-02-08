@@ -488,7 +488,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       img.onload = () => {
         try {
           const canvas = window.document.createElement('canvas');
-          const maxSize = 200;
+          const maxSize = 600;
           let w = img.width, h = img.height;
           if (w > h && w > maxSize) { h = (h * maxSize) / w; w = maxSize; }
           else if (h > maxSize) { w = (w * maxSize) / h; h = maxSize; }
@@ -1271,6 +1271,18 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
                 </button>
               ) : (
                 <div style={{ background: 'rgba(153, 102, 255, 0.1)', border: '1px solid #9966ff', borderRadius: '8px', padding: '16px' }}>
+
+                              {notes.length > 0 && (
+              <button onClick={generateCSV} style={{
+                ...S.btn, width: '100%', marginTop: '16px', padding: '14px', fontSize: '12px',
+                fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase',
+                background: 'linear-gradient(180deg, #3366ff 0%, #2255dd 100%)',
+                color: '#fff', borderRadius: '6px'
+              }}>
+                Export Log
+              </button>
+            )}
+
                   <label style={{ ...S.label, display: 'block', marginBottom: '10px', color: '#9966ff' }}>Custom Timecode</label>
 
                   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', marginBottom: '12px' }}>
@@ -1346,16 +1358,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               </div>
             )}
 
-            {notes.length > 0 && (
-              <button onClick={generateCSV} style={{
-                ...S.btn, width: '100%', marginTop: '16px', padding: '14px', fontSize: '12px',
-                fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase',
-                background: 'linear-gradient(180deg, #3366ff 0%, #2255dd 100%)',
-                color: '#fff', borderRadius: '6px'
-              }}>
-                Export CSV
-              </button>
-            )}
+
           </div>
         )}
       </div>
