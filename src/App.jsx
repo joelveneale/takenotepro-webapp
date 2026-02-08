@@ -202,7 +202,7 @@ const App = () => {
         body: JSON.stringify({
           userId: user.uid,
           email: user.email,
-          priceId: price_1SxRvePYNFrWcU67UwPjTSkR
+          priceId: 'price_1SxRvePYNFrWcU67UwPjTSkR'
         })
       });
       const data = await response.json();
