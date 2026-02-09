@@ -25,7 +25,7 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet" />
 
-      <div style={{ maxWidth: '380px', width: '100%' }}>
+      <div style={{ maxWidth: '800px', width: '100%' }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div style={{
@@ -202,7 +202,7 @@ const App = () => {
         body: JSON.stringify({
           userId: user.uid,
           email: user.email,
-          priceId: 'price_1SxRvePYNFrWcU67UwPjTSkR'
+          priceId: 'price_1SxXzaPh0QnpAWgVjIwM0T0g'
         })
       });
       const data = await response.json();
