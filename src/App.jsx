@@ -96,6 +96,32 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
                 color: '#e8e8e8', outline: 'none', boxSizing: 'border-box', marginBottom: '20px'
               }} />
 
+            <div style={{ textAlign: 'right', marginBottom: '12px', marginTop: '-8px' }}>
+  <button
+    type="button"
+    onClick={async () => {
+      if (!email) {
+        alert('Enter your email address first');
+        return;
+      }
+      try {
+        const { resetPassword } = await import('./services/auth');
+        await resetPassword(email);
+        alert('Password reset email sent! Check your inbox.');
+      } catch (err) {
+        alert(err.message);
+      }
+    }}
+    style={{
+      background: 'none', border: 'none', color: '#00ff88',
+      fontSize: '11px', cursor: 'pointer', padding: 0,
+      fontFamily: 'inherit'
+    }}
+  >
+    Forgot password?
+  </button>
+</div>
+
             <button onClick={handleSubmit} disabled={loading || !email || !password} style={{
               width: '100%', padding: '14px', fontSize: '13px', fontWeight: '600',
               letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: 'inherit',
