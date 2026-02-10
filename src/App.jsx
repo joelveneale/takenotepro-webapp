@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import TakeNotePro from './components/TakeNotePro';
+import { resetPassword } from './services/auth';
 
 // ─── AUTH SCREEN ──────────────────────────────────────────────────────────────
 
@@ -13,6 +14,19 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
     e?.preventDefault?.();
     if (isLogin) onLogin(email, password);
     else onSignup(email, password);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      alert('Enter your email address first');
+      return;
+    }
+    try {
+      await resetPassword(email);
+      alert('Password reset email sent! Check your inbox.');
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   return (
@@ -93,34 +107,26 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
               style={{
                 width: '100%', padding: '12px', fontSize: '14px', fontFamily: 'inherit',
                 background: '#141416', border: '1px solid #333', borderRadius: '6px',
-                color: '#e8e8e8', outline: 'none', boxSizing: 'border-box', marginBottom: '20px'
+                color: '#e8e8e8', outline: 'none', boxSizing: 'border-box', marginBottom: '4px'
               }} />
 
-            <div style={{ textAlign: 'right', marginBottom: '12px', marginTop: '-8px' }}>
-  <button
-    type="button"
-    onClick={async () => {
-      if (!email) {
-        alert('Enter your email address first');
-        return;
-      }
-      try {
-        const { resetPassword } = await import('./services/auth');
-        await resetPassword(email);
-        alert('Password reset email sent! Check your inbox.');
-      } catch (err) {
-        alert(err.message);
-      }
-    }}
-    style={{
-      background: 'none', border: 'none', color: '#00ff88',
-      fontSize: '11px', cursor: 'pointer', padding: 0,
-      fontFamily: 'inherit'
-    }}
-  >
-    Forgot password?
-  </button>
-</div>
+            {isLogin && (
+              <div style={{ textAlign: 'right', marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  style={{
+                    background: 'none', border: 'none', color: '#00ff88',
+                    fontSize: '11px', cursor: 'pointer', padding: 0,
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  Forgot password?
+                </button>
+              </div>
+            )}
+
+            {!isLogin && <div style={{ marginBottom: '16px' }} />}
 
             <button onClick={handleSubmit} disabled={loading || !email || !password} style={{
               width: '100%', padding: '14px', fontSize: '13px', fontWeight: '600',
@@ -220,8 +226,6 @@ const App = () => {
     if (!user) return;
     setCheckoutLoading(true);
     try {
-      // Call your backend API to create a Stripe Checkout session
-      // Replace this URL with your actual deployed backend endpoint
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -234,7 +238,6 @@ const App = () => {
       const data = await response.json();
 
       if (data.url) {
-        // Redirect to Stripe Checkout
         window.location.href = data.url;
       } else {
         alert('Error creating checkout session. Please try again.');
@@ -247,7 +250,6 @@ const App = () => {
     }
   };
 
-  // Loading state
   if (loading) {
     return (
       <div style={{
@@ -263,12 +265,10 @@ const App = () => {
     );
   }
 
-  // Not logged in
   if (!user) {
     return <AuthScreen onLogin={login} onSignup={signup} error={error} loading={loading} />;
   }
 
-  // Logged in — show the app
   return (
     <>
       <TakeNotePro
