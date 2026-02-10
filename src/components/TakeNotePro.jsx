@@ -42,10 +42,73 @@ const FPS_OPTIONS = [
 
 const PdfViewer = ({ document: doc, onClose }) => {
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState('');
+  const [pdfError, setPdfError] = useState(null);
+  const [pdfPages, setPdfPages] = useState([]);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const canvasContainerRef = useRef(null);
 
   const zoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 3));
   const zoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.5));
   const resetZoom = () => setZoomLevel(1);
+
+  // Load PDF with pdf.js (for password support)
+  const loadWithPdfJs = async (password = null) => {
+    setPdfLoading(true);
+    setPdfError(null);
+    setPdfPages([]);
+
+    try {
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      const base64 = doc.data.split(',')[1];
+      if (!base64) throw new Error('Invalid PDF data');
+
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const loadingTask = pdfjsLib.getDocument({ data: bytes, password: password });
+      const pdf = await loadingTask.promise;
+
+      const pages = [];
+      const containerWidth = window.innerWidth - 40;
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(containerWidth / viewport.width, 2);
+        const scaledViewport = page.getViewport({ scale });
+
+        const canvas = window.document.createElement('canvas');
+        canvas.width = scaledViewport.width;
+        canvas.height = scaledViewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
+        pages.push(canvas.toDataURL());
+      }
+
+      setPdfPages(pages);
+      setNeedsPassword(false);
+    } catch (err) {
+      if (err.name === 'PasswordException') {
+        setNeedsPassword(true);
+        setPdfError(password ? 'Incorrect password. Please try again.' : null);
+      } else {
+        setPdfError(`Failed to load PDF: ${err.message || 'Unknown error'}`);
+      }
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handlePasswordSubmit = (e) => {
+    e?.preventDefault?.();
+    if (pdfPassword) loadWithPdfJs(pdfPassword);
+  };
 
   if (!doc) return null;
 
@@ -70,12 +133,9 @@ const PdfViewer = ({ document: doc, onClose }) => {
           {doc.name}
         </div>
         <button onClick={() => {
-          // Download the file
           const link = window.document.createElement('a');
-          link.href = doc.data;
-          link.download = doc.name;
-          window.document.body.appendChild(link);
-          link.click();
+          link.href = doc.data; link.download = doc.name;
+          window.document.body.appendChild(link); link.click();
           window.document.body.removeChild(link);
         }} style={{
           padding: '8px 12px', fontSize: '11px', fontWeight: '600',
@@ -104,26 +164,124 @@ const PdfViewer = ({ document: doc, onClose }) => {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '0', background: '#525659' }}>
-        {isPdf ? (
-          <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center', minHeight: '100%' }}>
-            <object data={doc.data} type="application/pdf" style={{
-              width: '100%', minHeight: '800px', border: 'none', background: '#fff'
-            }}>
-              <div style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center',
-                justifyContent: 'center', minHeight: '400px', color: '#fff',
-                padding: '20px', textAlign: 'center', background: '#525659'
-              }}>
-                <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
-                <div style={{ marginBottom: '16px' }}>PDF preview not available in your browser</div>
-                <div style={{ color: '#888', fontSize: '11px' }}>Use the Download button to open in another app</div>
+      <div ref={canvasContainerRef} style={{ flex: 1, overflow: 'auto', padding: '0', background: '#525659' }}>
+        {/* Password prompt */}
+        {needsPassword && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '20px' }}>
+            <div style={{ background: '#1a1a1e', borderRadius: '12px', padding: '24px', maxWidth: '300px', width: '100%' }}>
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔒</div>
+                <div style={{ color: '#fff', fontWeight: '600', marginBottom: '4px' }}>Password Protected</div>
+                <div style={{ color: '#888', fontSize: '12px' }}>Enter password to view this PDF</div>
               </div>
-            </object>
+              {pdfError && (
+                <div style={{ color: '#ff4444', fontSize: '12px', textAlign: 'center', marginBottom: '12px' }}>{pdfError}</div>
+              )}
+              <form onSubmit={handlePasswordSubmit}>
+                <input
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck="false"
+                  value={pdfPassword}
+                  onChange={(e) => setPdfPassword(e.target.value)}
+                  placeholder="Enter password"
+                  autoFocus
+                  style={{
+                    width: '100%', padding: '12px', fontSize: '16px',
+                    background: '#0a0a0b', border: '1px solid #444', borderRadius: '6px',
+                    color: '#fff', marginBottom: '12px', boxSizing: 'border-box',
+                    outline: 'none', WebkitAppearance: 'none'
+                  }}
+                />
+                <button type="submit" disabled={!pdfPassword || pdfLoading} style={{
+                  width: '100%', padding: '12px', fontSize: '13px', fontWeight: '600',
+                  background: pdfPassword ? 'linear-gradient(180deg, #00ff88, #00cc6a)' : '#333',
+                  color: pdfPassword ? '#000' : '#666',
+                  border: 'none', borderRadius: '6px', cursor: pdfPassword ? 'pointer' : 'not-allowed'
+                }}>
+                  {pdfLoading ? 'Unlocking...' : 'Unlock PDF'}
+                </button>
+              </form>
+            </div>
           </div>
-        ) : (
+        )}
+
+        {/* Loading */}
+        {pdfLoading && !needsPassword && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '28px', marginBottom: '12px' }}>⏳</div>
+              <div style={{ fontSize: '14px' }}>Rendering PDF...</div>
+            </div>
+          </div>
+        )}
+
+        {/* Rendered PDF pages from pdf.js */}
+        {pdfPages.length > 0 && (
           <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }}>
-            <img src={doc.data} alt={doc.name} style={{ width: '100%', height: 'auto', display: 'block' }} />
+            {pdfPages.map((page, i) => (
+              <img key={i} src={page} alt={`Page ${i + 1}`} style={{ width: '100%', display: 'block', marginBottom: '4px' }} />
+            ))}
+          </div>
+        )}
+
+        {/* Native PDF / image viewer (non-password PDFs) */}
+        {!needsPassword && !pdfLoading && pdfPages.length === 0 && (
+          isPdf ? (
+            <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center', minHeight: '100%' }}>
+              <object data={doc.data} type="application/pdf" style={{
+                width: '100%', minHeight: '800px', border: 'none', background: '#fff'
+              }}>
+                <div style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  justifyContent: 'center', minHeight: '400px', color: '#fff',
+                  padding: '20px', textAlign: 'center', background: '#525659'
+                }}>
+                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
+                  <div style={{ marginBottom: '16px' }}>PDF preview not available in your browser</div>
+                  <button onClick={() => loadWithPdfJs()} style={{
+                    padding: '12px 24px', fontSize: '12px', fontWeight: '600',
+                    background: '#3366ff', color: '#fff', border: 'none',
+                    borderRadius: '6px', cursor: 'pointer', marginBottom: '8px'
+                  }}>
+                    Try Alternative Viewer
+                  </button>
+                  <div style={{ color: '#888', fontSize: '11px' }}>Use the Download button to open in another app</div>
+                </div>
+              </object>
+              {/* Password Protected button — always visible for PDFs */}
+              <div style={{ textAlign: 'center', padding: '12px' }}>
+                <button onClick={() => loadWithPdfJs()} style={{
+                  padding: '10px 20px', fontSize: '11px', fontWeight: '600',
+                  background: '#2a2a2e', color: '#ccc', border: '1px solid #444',
+                  borderRadius: '6px', cursor: 'pointer', letterSpacing: '0.05em'
+                }}>
+                  🔒 Password Protected? Tap here
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center' }}>
+              <img src={doc.data} alt={doc.name} style={{ width: '100%', height: 'auto', display: 'block' }} />
+            </div>
+          )
+        )}
+
+        {/* Error */}
+        {pdfError && !needsPassword && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '20px' }}>
+            <div style={{ textAlign: 'center', color: '#ff4444' }}>
+              <div style={{ fontSize: '32px', marginBottom: '12px' }}>⚠️</div>
+              <div style={{ fontSize: '14px', marginBottom: '12px' }}>{pdfError}</div>
+              <button onClick={() => loadWithPdfJs()} style={{
+                padding: '10px 20px', fontSize: '12px', fontWeight: '600',
+                background: '#3366ff', color: '#fff', border: 'none',
+                borderRadius: '6px', cursor: 'pointer'
+              }}>Try Again</button>
+            </div>
           </div>
         )}
       </div>
@@ -249,16 +407,22 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     const tcDate = new Date();
     tcDate.setHours(hours, minutes, seconds, Math.floor((frames / fps) * 1000));
     tcOffsetRef.current = tcDate.getTime() - now;
+    try { localStorage.setItem('tnp_tc_offset', String(tcOffsetRef.current)); } catch (e) {}
   }, [hours, minutes, seconds, frames, fps]);
 
-  // Auto-set to current time on mount
+  // Auto-set to current time on mount (restore offset from cache if available)
   useEffect(() => {
-    const now = new Date();
-    setHours(now.getHours());
-    setMinutes(now.getMinutes());
-    setSeconds(now.getSeconds());
-    setFrames(0);
-    tcOffsetRef.current = 0;
+    let savedOffset = 0;
+    try {
+      const cached = localStorage.getItem('tnp_tc_offset');
+      if (cached !== null) savedOffset = parseFloat(cached) || 0;
+    } catch (e) {}
+    tcOffsetRef.current = savedOffset;
+    const tc = new Date(Date.now() + savedOffset);
+    setHours(tc.getHours());
+    setMinutes(tc.getMinutes());
+    setSeconds(tc.getSeconds());
+    setFrames(Math.floor((tc.getMilliseconds() / 1000) * fps));
     setIsEditing(false);
     setIsRunning(true);
   }, []);
@@ -399,9 +563,25 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
       saveCurrentSession();
-    }, 5000); // Save 5 seconds after last change
+    }, 2000); // Save 2 seconds after last change
     return () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); };
   }, [notes, mics, metadataFields, fps, currentSessionId, sessionsLoaded]);
+
+  // Save immediately when user leaves or switches tab
+  useEffect(() => {
+    const handleBeforeUnload = () => { if (currentSessionId && sessionsLoaded) saveCurrentSession(); };
+    const handleVisibilityChange = () => {
+      if (window.document.visibilityState === 'hidden' && currentSessionId && sessionsLoaded) {
+        saveCurrentSession();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentSessionId, sessionsLoaded, saveCurrentSession]);
 
   const loadSession = (sessionId) => {
     if (currentSessionId) saveCurrentSession();
@@ -696,6 +876,10 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   const syncToNow = () => {
     const now = new Date();
     setHours(now.getHours()); setMinutes(now.getMinutes()); setSeconds(now.getSeconds()); setFrames(0);
+    tcOffsetRef.current = 0;
+    try { localStorage.setItem('tnp_tc_offset', '0'); } catch (e) {}
+    setIsEditing(false);
+    setIsRunning(true);
   };
 
   // ─── SHARED STYLES ─────────────────────────────────────────────────────
@@ -1651,16 +1835,16 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
 
                         {isSelected && (
                           <div style={{ display: 'flex', borderTop: '1px solid #2a2a2e', marginTop: '12px' }}>
-                            <button onClick={(e) => { e.stopPropagation(); if (!isActive) loadSession(session.id); }}
-                              disabled={isActive} style={{
+                            <button onClick={(e) => { e.stopPropagation(); if (isActive) { setShowSessionsPanel(false); } else { loadSession(session.id); } }}
+                              style={{
                                 ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
                                 fontFamily: "'Outfit', sans-serif",
-                                background: isActive ? 'transparent' : '#00ff88',
-                                color: isActive ? '#666' : '#000',
+                                background: isActive ? '#2a2a2e' : '#00ff88',
+                                color: isActive ? '#fff' : '#000',
                                 borderRight: '1px solid #2a2a2e',
-                                cursor: isActive ? 'default' : 'pointer'
+                                cursor: 'pointer'
                               }}>
-                              {isActive ? 'Active' : 'Load'}
+                              {isActive ? 'Open' : 'Load'}
                             </button>
                             <button onClick={(e) => {
                               e.stopPropagation();
