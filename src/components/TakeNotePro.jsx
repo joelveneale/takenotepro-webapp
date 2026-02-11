@@ -80,13 +80,15 @@ const PdfViewer = ({ document: doc, onClose }) => {
 
       const pages = [];
       const containerWidth = Math.min(window.innerWidth - 40, 800);
+      const dpr = window.devicePixelRatio || 1;
 
-      for (let i = 1; i <= pdf.numPages; i++) {
+        for (let i = 1; i <= pdf.numPages; i++) {
         setRenderProgress(`Rendering page ${i} of ${pdf.numPages}...`);
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 1 });
-        const scale = Math.min(containerWidth / viewport.width, 2);
-        const scaledViewport = page.getViewport({ scale });
+        const scale = Math.min(containerWidth / viewport.width, 3);
+        const renderScale = scale * dpr;
+        const scaledViewport = page.getViewport({ scale: renderScale });
 
         const canvas = window.document.createElement('canvas');
         canvas.width = scaledViewport.width;
