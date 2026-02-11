@@ -61,8 +61,18 @@ const PdfViewer = ({ document: doc, onClose }) => {
     setRenderProgress('Loading library...');
 
     try {
-      const pdfjsLib = await import('pdfjs-dist');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+      // Load pdf.js from CDN to avoid v5 WASM/worker issues
+if (!window.pdfjsLib) {
+  await new Promise((resolve, reject) => {
+    const script = window.document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = resolve;
+    script.onerror = reject;
+    window.document.head.appendChild(script);
+  });
+}
+const pdfjsLib = window.pdfjsLib;
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
       setRenderProgress('Decoding PDF...');
       const base64 = doc.data.split(',')[1];
