@@ -47,7 +47,7 @@ const PdfViewer = ({ document: doc, onClose }) => {
   const [pdfError, setPdfError] = useState(null);
   const [pdfPages, setPdfPages] = useState([]);
   const [pdfLoading, setPdfLoading] = useState(false);
-  const canvasContainerRef = useRef(null);
+  const [renderProgress, setRenderProgress] = useState('');
 
   const zoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 3));
   const zoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.5));
@@ -58,11 +58,13 @@ const PdfViewer = ({ document: doc, onClose }) => {
     setPdfLoading(true);
     setPdfError(null);
     setPdfPages([]);
+    setRenderProgress('Loading library...');
 
     try {
       const pdfjsLib = await import('pdfjs-dist');
       pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
+      setRenderProgress('Decoding PDF...');
       const base64 = doc.data.split(',')[1];
       if (!base64) throw new Error('Invalid PDF data');
 
@@ -72,12 +74,15 @@ const PdfViewer = ({ document: doc, onClose }) => {
         bytes[i] = binaryString.charCodeAt(i);
       }
 
+      setRenderProgress('Opening PDF...');
       const loadingTask = pdfjsLib.getDocument({ data: bytes, password: password });
       const pdf = await loadingTask.promise;
 
       const pages = [];
-      const containerWidth = window.innerWidth - 40;
+      const containerWidth = Math.min(window.innerWidth - 40, 800);
+
       for (let i = 1; i <= pdf.numPages; i++) {
+        setRenderProgress(`Rendering page ${i} of ${pdf.numPages}...`);
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 1 });
         const scale = Math.min(containerWidth / viewport.width, 2);
@@ -87,14 +92,23 @@ const PdfViewer = ({ document: doc, onClose }) => {
         canvas.width = scaledViewport.width;
         canvas.height = scaledViewport.height;
         const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
-        pages.push(canvas.toDataURL());
+
+        const renderTask = page.render({ canvasContext: ctx, viewport: scaledViewport });
+        // pdf.js v5 render() returns a promise directly; v3 returns { promise }
+        if (renderTask.promise) {
+          await renderTask.promise;
+        } else {
+          await renderTask;
+        }
+
+        pages.push(canvas.toDataURL('image/jpeg', 0.85));
       }
 
       setPdfPages(pages);
       setNeedsPassword(false);
     } catch (err) {
-      if (err.name === 'PasswordException') {
+      console.error('PDF load error:', err);
+      if (err.name === 'PasswordException' || (err.message && err.message.includes('password'))) {
         setNeedsPassword(true);
         setPdfError(password ? 'Incorrect password. Please try again.' : null);
       } else {
@@ -102,6 +116,7 @@ const PdfViewer = ({ document: doc, onClose }) => {
       }
     } finally {
       setPdfLoading(false);
+      setRenderProgress('');
     }
   };
 
@@ -153,68 +168,73 @@ const PdfViewer = ({ document: doc, onClose }) => {
         </button>
       </div>
 
+      {/* Password prompt — positioned at top, below header */}
+      {needsPassword && (
+        <div style={{
+          padding: '20px', background: '#141416', borderBottom: '1px solid #333'
+        }}>
+          <div style={{ maxWidth: '320px', margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: '12px' }}>
+              <span style={{ fontSize: '24px' }}>🔒</span>
+              <div style={{ color: '#fff', fontWeight: '600', fontSize: '14px', marginTop: '4px' }}>Password Protected</div>
+            </div>
+            {pdfError && (
+              <div style={{ color: '#ff4444', fontSize: '12px', textAlign: 'center', marginBottom: '8px' }}>{pdfError}</div>
+            )}
+            <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                value={pdfPassword}
+                onChange={(e) => setPdfPassword(e.target.value)}
+                placeholder="Enter password"
+                autoFocus
+                style={{
+                  flex: 1, padding: '12px', fontSize: '16px',
+                  background: '#0a0a0b', border: '1px solid #444', borderRadius: '6px',
+                  color: '#fff', boxSizing: 'border-box',
+                  outline: 'none', WebkitAppearance: 'none'
+                }}
+              />
+              <button type="submit" disabled={!pdfPassword || pdfLoading} style={{
+                padding: '12px 20px', fontSize: '13px', fontWeight: '600',
+                background: pdfPassword ? 'linear-gradient(180deg, #00ff88, #00cc6a)' : '#333',
+                color: pdfPassword ? '#000' : '#666',
+                border: 'none', borderRadius: '6px',
+                cursor: pdfPassword ? 'pointer' : 'not-allowed',
+                whiteSpace: 'nowrap'
+              }}>
+                {pdfLoading ? '...' : 'Unlock'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Zoom controls */}
-      <div style={{
-        display: 'flex', justifyContent: 'center', gap: '8px', padding: '8px',
-        background: '#1a1a1e', borderBottom: '1px solid #333'
-      }}>
-        <button onClick={zoomOut} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '18px', cursor: 'pointer' }}>−</button>
-        <button onClick={resetZoom} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', minWidth: '60px', cursor: 'pointer' }}>{Math.round(zoomLevel * 100)}%</button>
-        <button onClick={zoomIn} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '18px', cursor: 'pointer' }}>+</button>
-      </div>
+      {!needsPassword && (
+        <div style={{
+          display: 'flex', justifyContent: 'center', gap: '8px', padding: '8px',
+          background: '#1a1a1e', borderBottom: '1px solid #333'
+        }}>
+          <button onClick={zoomOut} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '18px', cursor: 'pointer' }}>−</button>
+          <button onClick={resetZoom} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', minWidth: '60px', cursor: 'pointer' }}>{Math.round(zoomLevel * 100)}%</button>
+          <button onClick={zoomIn} style={{ padding: '8px 14px', background: '#333', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '18px', cursor: 'pointer' }}>+</button>
+        </div>
+      )}
 
       {/* Content */}
-      <div ref={canvasContainerRef} style={{ flex: 1, overflow: 'auto', padding: '0', background: '#525659' }}>
-        {/* Password prompt */}
-        {needsPassword && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '20px' }}>
-            <div style={{ background: '#1a1a1e', borderRadius: '12px', padding: '24px', maxWidth: '300px', width: '100%' }}>
-              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔒</div>
-                <div style={{ color: '#fff', fontWeight: '600', marginBottom: '4px' }}>Password Protected</div>
-                <div style={{ color: '#888', fontSize: '12px' }}>Enter password to view this PDF</div>
-              </div>
-              {pdfError && (
-                <div style={{ color: '#ff4444', fontSize: '12px', textAlign: 'center', marginBottom: '12px' }}>{pdfError}</div>
-              )}
-              <form onSubmit={handlePasswordSubmit}>
-                <input
-                  type="text"
-                  inputMode="text"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck="false"
-                  value={pdfPassword}
-                  onChange={(e) => setPdfPassword(e.target.value)}
-                  placeholder="Enter password"
-                  autoFocus
-                  style={{
-                    width: '100%', padding: '12px', fontSize: '16px',
-                    background: '#0a0a0b', border: '1px solid #444', borderRadius: '6px',
-                    color: '#fff', marginBottom: '12px', boxSizing: 'border-box',
-                    outline: 'none', WebkitAppearance: 'none'
-                  }}
-                />
-                <button type="submit" disabled={!pdfPassword || pdfLoading} style={{
-                  width: '100%', padding: '12px', fontSize: '13px', fontWeight: '600',
-                  background: pdfPassword ? 'linear-gradient(180deg, #00ff88, #00cc6a)' : '#333',
-                  color: pdfPassword ? '#000' : '#666',
-                  border: 'none', borderRadius: '6px', cursor: pdfPassword ? 'pointer' : 'not-allowed'
-                }}>
-                  {pdfLoading ? 'Unlocking...' : 'Unlock PDF'}
-                </button>
-              </form>
-            </div>
-          </div>
-        )}
-
+      <div style={{ flex: 1, overflow: 'auto', padding: '0', background: '#525659' }}>
         {/* Loading */}
         {pdfLoading && !needsPassword && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#fff' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '28px', marginBottom: '12px' }}>⏳</div>
-              <div style={{ fontSize: '14px' }}>Rendering PDF...</div>
+              <div style={{ fontSize: '28px', marginBottom: '12px', animation: 'pulse 1s infinite' }}>⏳</div>
+              <div style={{ fontSize: '14px' }}>{renderProgress || 'Rendering PDF...'}</div>
             </div>
           </div>
         )}
@@ -231,28 +251,30 @@ const PdfViewer = ({ document: doc, onClose }) => {
         {/* Native PDF / image viewer (non-password PDFs) */}
         {!needsPassword && !pdfLoading && pdfPages.length === 0 && (
           isPdf ? (
-            <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center', minHeight: '100%' }}>
-              <object data={doc.data} type="application/pdf" style={{
-                width: '100%', minHeight: '800px', border: 'none', background: '#fff'
-              }}>
-                <div style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'center',
-                  justifyContent: 'center', minHeight: '400px', color: '#fff',
-                  padding: '20px', textAlign: 'center', background: '#525659'
+            <div>
+              <div style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top center', minHeight: '100%' }}>
+                <object data={doc.data} type="application/pdf" style={{
+                  width: '100%', minHeight: '800px', border: 'none', background: '#fff'
                 }}>
-                  <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
-                  <div style={{ marginBottom: '16px' }}>PDF preview not available in your browser</div>
-                  <button onClick={() => loadWithPdfJs()} style={{
-                    padding: '12px 24px', fontSize: '12px', fontWeight: '600',
-                    background: '#3366ff', color: '#fff', border: 'none',
-                    borderRadius: '6px', cursor: 'pointer', marginBottom: '8px'
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    justifyContent: 'center', minHeight: '400px', color: '#fff',
+                    padding: '20px', textAlign: 'center', background: '#525659'
                   }}>
-                    Try Alternative Viewer
-                  </button>
-                  <div style={{ color: '#888', fontSize: '11px' }}>Use the Download button to open in another app</div>
-                </div>
-              </object>
-              {/* Password Protected button — always visible for PDFs */}
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
+                    <div style={{ marginBottom: '16px' }}>PDF preview not available in your browser</div>
+                    <button onClick={() => loadWithPdfJs()} style={{
+                      padding: '12px 24px', fontSize: '12px', fontWeight: '600',
+                      background: '#3366ff', color: '#fff', border: 'none',
+                      borderRadius: '6px', cursor: 'pointer', marginBottom: '8px'
+                    }}>
+                      Try Alternative Viewer
+                    </button>
+                    <div style={{ color: '#888', fontSize: '11px' }}>Use the Download button to open in another app</div>
+                  </div>
+                </object>
+              </div>
+              {/* Password Protected button */}
               <div style={{ textAlign: 'center', padding: '12px' }}>
                 <button onClick={() => loadWithPdfJs()} style={{
                   padding: '10px 20px', fontSize: '11px', fontWeight: '600',
@@ -348,9 +370,25 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   // Mic list state
   const [mics, setMics] = useState(DEFAULT_MICS());
 
-  // Documents state
-  const [documents, setDocuments] = useState([]);
+  // Documents state — persist in localStorage
+  const [documents, setDocuments] = useState(() => {
+    try {
+      const cached = localStorage.getItem('tnp_documents');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
   const [viewingDocument, setViewingDocument] = useState(null);
+
+  // Save documents to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('tnp_documents', JSON.stringify(documents));
+    } catch (e) {
+      // localStorage might be full — docs with base64 data can be large
+      console.warn('Could not cache documents to localStorage:', e.message);
+    }
+  }, [documents]);
 
   // Notes state
   const [notes, setNotes] = useState([]);
