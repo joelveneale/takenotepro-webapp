@@ -61,7 +61,7 @@ const PdfViewer = ({ document: doc, onClose }) => {
 
     try {
       const pdfjsLib = await import('pdfjs-dist');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
       const base64 = doc.data.split(',')[1];
       if (!base64) throw new Error('Invalid PDF data');
