@@ -513,6 +513,16 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           setMics(first.mics || DEFAULT_MICS());
           setMetadataFields(first.metadata || DEFAULT_METADATA());
           if (first.fps) setFps(first.fps);
+          // Restore TC offset from session (Firestore takes priority over localStorage)
+          if (first.tcOffset !== undefined && first.tcOffset !== null) {
+            tcOffsetRef.current = first.tcOffset;
+            try { localStorage.setItem('tnp_tc_offset', String(first.tcOffset)); } catch (e) {}
+            const tc = new Date(Date.now() + first.tcOffset);
+            setHours(tc.getHours());
+            setMinutes(tc.getMinutes());
+            setSeconds(tc.getSeconds());
+            setFrames(Math.floor((tc.getMilliseconds() / 1000) * (first.fps || 25)));
+          }
         } else {
           // Create initial session
           createNewSession(true);
@@ -552,7 +562,8 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
         ...f,
         value: f.id === 'production' ? f.value : ''
       })),
-      fps: fps
+      fps: fps,
+      tcOffset: tcOffsetRef.current
     };
 
     setSessions(prev => [newSession, ...prev]);
@@ -575,6 +586,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     const updatedSession = {
       id: currentSessionId,
       notes, mics, metadata: metadataFields, fps,
+      tcOffset: tcOffsetRef.current,
       updatedAt: new Date().toISOString()
     };
 
@@ -631,6 +643,18 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       setMics(session.mics || DEFAULT_MICS());
       setMetadataFields(session.metadata || DEFAULT_METADATA());
       if (session.fps) setFps(session.fps);
+      // Restore TC offset from session
+      if (session.tcOffset !== undefined && session.tcOffset !== null) {
+        tcOffsetRef.current = session.tcOffset;
+        try { localStorage.setItem('tnp_tc_offset', String(session.tcOffset)); } catch (e) {}
+        const tc = new Date(Date.now() + session.tcOffset);
+        setHours(tc.getHours());
+        setMinutes(tc.getMinutes());
+        setSeconds(tc.getSeconds());
+        setFrames(Math.floor((tc.getMilliseconds() / 1000) * (session.fps || fps)));
+        setIsEditing(false);
+        setIsRunning(true);
+      }
       setCurrentSessionId(sessionId);
     }
     setShowSessionsPanel(false);
