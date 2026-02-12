@@ -415,6 +415,20 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
 
+  // Online/offline tracking
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+
   const intervalRef = useRef(null);
   const quickNoteRef = useRef(null);
   const tcOffsetRef = useRef(0);
@@ -1047,10 +1061,18 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           }}>
             {isPro ? 'PRO' : 'FREE'}
           </span>
-          {/* Save indicator */}
-          {isSaving && (
+          {/* Status indicator */}
+          {!isOnline ? (
+            <span style={{
+              fontSize: '9px', letterSpacing: '0.1em', padding: '3px 8px',
+              background: 'rgba(255, 68, 68, 0.15)', color: '#ff6666',
+              borderRadius: '4px', fontWeight: '600'
+            }}>
+              OFFLINE
+            </span>
+          ) : isSaving ? (
             <span style={{ fontSize: '9px', color: '#ffaa00', letterSpacing: '0.1em' }}>Saving...</span>
-          )}
+          ) : null}
           <div style={{ fontSize: '11px', color: '#666', letterSpacing: '0.1em', fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
             {fps} FPS
           </div>
@@ -1063,6 +1085,20 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           </button>
         </div>
       </header>
+
+      {/* ─── OFFLINE BANNER ─────────────────────────────────────────── */}
+      {!isOnline && (
+        <div style={{
+          background: 'rgba(255, 68, 68, 0.1)', border: '1px solid rgba(255, 68, 68, 0.3)',
+          borderRadius: '6px', padding: '8px 12px', marginBottom: '12px',
+          display: 'flex', alignItems: 'center', gap: '8px'
+        }}>
+          <span style={{ fontSize: '12px' }}>📡</span>
+          <span style={{ fontSize: '11px', color: '#ff8888' }}>
+            You're offline — notes are saved locally and will sync when you reconnect
+          </span>
+        </div>
+      )}
 
       {/* ─── SESSION BAR ───────────────────────────────────────────── */}
       <div onClick={() => setShowSessionsPanel(true)} style={{
