@@ -874,21 +874,26 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
 
   // Web-native file download helper
   // Share or download file — uses native share sheet on mobile, falls back to download
+ // Share (mobile) or download (desktop)
   const shareFile = async (content, filename, mimeType) => {
     const blob = new Blob([content], { type: mimeType });
-    const file = new File([blob], filename, { type: mimeType });
 
-    // Try Web Share API (gives AirDrop, WhatsApp, email, etc.)
-    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: filename });
-        return;
-      } catch (err) {
-        if (err.name === 'AbortError') return; // user cancelled
+    // Only try share sheet on mobile/tablet (touch devices with narrow screens)
+    const isMobile = 'ontouchstart' in window && window.innerWidth < 1024;
+
+    if (isMobile && navigator.share && navigator.canShare) {
+      const file = new File([blob], filename, { type: mimeType });
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: filename });
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+        }
       }
     }
 
-    // Fallback: direct download
+    // Desktop: straight to downloads
     const url = URL.createObjectURL(blob);
     const link = window.document.createElement('a');
     link.href = url;
@@ -1799,7 +1804,8 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
                   // Try share sheet, fall back to direct download
                   const pdfBlob = pdf.output('blob');
                   const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
-                  if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+                  const isMobile = 'ontouchstart' in window && window.innerWidth < 1024;
+                  if (isMobile && navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
                     try {
                       await navigator.share({ files: [pdfFile], title: filename });
                     } catch (shareErr) {
