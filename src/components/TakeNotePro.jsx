@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { jsPDF } from 'jspdf';
-import { saveSessionToFirestore, loadUserSessions, deleteSessionFromFirestore } from '../services/sessions';
+import { saveSessionToFirestore, loadUserSessions, deleteSessionFromFirestore, fetchSessionFromFirestore, mergeSessionData } from '../services/sessions';
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
@@ -419,7 +419,24 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
-    const goOnline = () => setIsOnline(true);
+    const goOnline = () => {
+      setIsOnline(true);
+      // Reconnect sync: pull latest from Firestore and merge
+      if (currentSessionId && user) {
+        fetchSessionFromFirestore(currentSessionId).then(remote => {
+          if (remote) {
+            const localSession = {
+              id: currentSessionId, notes, mics, metadata: metadataFields, fps,
+              tcOffset: tcOffsetRef.current, updatedAt: new Date().toISOString()
+            };
+            const merged = mergeSessionData(localSession, remote);
+            if (merged.notes.length > notes.length) setNotes(merged.notes);
+            // Trigger a save to push local offline changes up
+            setTimeout(() => saveCurrentSession(), 500);
+          }
+        }).catch(() => {});
+      }
+    };
     const goOffline = () => setIsOnline(false);
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
@@ -427,7 +444,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       window.removeEventListener('online', goOnline);
       window.removeEventListener('offline', goOffline);
     };
-  }, []);
+  }, [currentSessionId, user, notes, mics, metadataFields, fps]);
 
   const intervalRef = useRef(null);
   const quickNoteRef = useRef(null);
@@ -594,32 +611,61 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     }
   };
 
-  const saveCurrentSession = useCallback(() => {
+  const saveCurrentSession = useCallback(async () => {
     if (!currentSessionId) return;
 
-    const updatedSession = {
+    const localSession = {
       id: currentSessionId,
       notes, mics, metadata: metadataFields, fps,
       tcOffset: tcOffsetRef.current,
       updatedAt: new Date().toISOString()
     };
 
-    // Update in local state
-    setSessions(prev => prev.map(s =>
-      s.id === currentSessionId ? { ...s, ...updatedSession } : s
-    ));
-
-    // Save to Firestore
-    if (user) {
+    // If online, fetch remote version and merge before saving
+    if (user && navigator.onLine) {
       setIsSaving(true);
-      saveSessionToFirestore(user.uid, {
-        ...sessions.find(s => s.id === currentSessionId),
-        ...updatedSession,
-        userId: user.uid
-      }).then(() => {
-        setIsSaving(false);
+      try {
+        const remote = await fetchSessionFromFirestore(currentSessionId);
+        const merged = mergeSessionData(localSession, remote);
+
+        // If remote had new notes we didn't have, update local state
+        if (remote && merged.notes.length > localSession.notes.length) {
+          setNotes(merged.notes);
+        }
+
+        // Update local sessions list
+        setSessions(prev => prev.map(s =>
+          s.id === currentSessionId ? { ...s, ...merged } : s
+        ));
+
+        // Save merged result to Firestore
+        await saveSessionToFirestore(user.uid, {
+          ...sessions.find(s => s.id === currentSessionId),
+          ...merged,
+          userId: user.uid
+        });
         setLastSaved(new Date());
-      }).catch(() => setIsSaving(false));
+      } catch (err) {
+        console.error('Merge-save error:', err);
+      } finally {
+        setIsSaving(false);
+      }
+    } else {
+      // Offline: save locally, Firestore persistence will queue it
+      setSessions(prev => prev.map(s =>
+        s.id === currentSessionId ? { ...s, ...localSession } : s
+      ));
+      if (user) {
+        setIsSaving(true);
+        saveSessionToFirestore(user.uid, {
+          ...sessions.find(s => s.id === currentSessionId),
+          ...localSession,
+          userId: user.uid
+        }).then(() => {
+          setIsSaving(false);
+          setLastSaved(new Date());
+        }).catch(() => setIsSaving(false));
+      }
     }
   }, [currentSessionId, notes, mics, metadataFields, fps, user, sessions]);
 
@@ -1077,6 +1123,27 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
             {fps} FPS
           </div>
           {/* User menu */}
+          {isPro && (
+            <button onClick={async () => {
+              try {
+                const res = await fetch('/api/create-portal-session', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ email: user?.email })
+                });
+                const data = await res.json();
+                if (data.url) window.location.href = data.url;
+                else alert('Unable to open subscription management. Please try again.');
+              } catch (err) {
+                alert('Unable to open subscription management. Please check your connection.');
+              }
+            }} style={{
+              ...S.btn, background: 'transparent', color: '#00ff88', fontSize: '10px',
+              padding: '4px 8px', border: '1px solid #00ff88', borderRadius: '4px'
+            }}>
+              Manage Plan
+            </button>
+          )}
           <button onClick={onLogout} style={{
             ...S.btn, background: 'transparent', color: '#666', fontSize: '10px',
             padding: '4px 8px', border: '1px solid #333', borderRadius: '4px'
