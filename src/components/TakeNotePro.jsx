@@ -1023,6 +1023,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     try { localStorage.setItem('tnp_tc_offset', '0'); } catch (e) {}
     setIsEditing(false);
     setIsRunning(true);
+    setTimeout(() => saveCurrentSession(), 100);
   };
 
   // ─── SHARED STYLES ─────────────────────────────────────────────────────
@@ -1258,7 +1259,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               ⟳ Sync to Current Time
             </button>
 
-            <button onClick={() => { updateTCOffset(); setIsEditing(false); setIsRunning(true); }} style={{
+            <button onClick={() => { updateTCOffset(); setIsEditing(false); setIsRunning(true); setTimeout(() => saveCurrentSession(), 100); }} style={{
               ...S.btn, width: '100%', padding: '14px', fontSize: '13px', fontWeight: '600',
               letterSpacing: '0.1em', textTransform: 'uppercase',
               background: 'linear-gradient(180deg, #00ff88 0%, #00cc6a 100%)',
