@@ -22,39 +22,43 @@ const db = getFirestore();
 
 // Link Stripe customer to RevenueCat using Firebase UID
 async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
-  if (!process.env.REVENUECAT_STRIPE_PUBLIC_KEY) {
-    console.warn('REVENUECAT_STRIPE_PUBLIC_KEY not configured, skipping RevenueCat link');
+  if (!process.env.REVENUECAT_SECRET_KEY) {
+    console.warn('REVENUECAT_SECRET_KEY not configured, skipping RevenueCat link');
     return false;
   }
 
   try {
-    // Post the Stripe receipt/token to RevenueCat so it knows this user has a Stripe subscription
-    // The receipts endpoint requires a public API key, not secret
+    // Use RevenueCat's REST API to set the Stripe customer ID on this subscriber
+    // This links the Firebase user to their Stripe subscription so RevenueCat
+    // can automatically grant entitlements from Stripe purchases
     const response = await fetch(
-      `https://api.revenuecat.com/v1/receipts`,
+      `https://api.revenuecat.com/v1/subscribers/${firebaseUID}/attributes`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.REVENUECAT_STRIPE_PUBLIC_KEY}`,
+          'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
         },
         body: JSON.stringify({
-          app_user_id: firebaseUID,
-          fetch_token: stripeCustomerId,
+          attributes: {
+            'stripe_customer_id': {
+              value: stripeCustomerId,
+            },
+          },
         }),
       }
     );
 
     if (!response.ok) {
       const text = await response.text();
-      console.error('RevenueCat receipts API error:', response.status, text);
+      console.error('RevenueCat attributes API error:', response.status, text);
       return false;
     }
 
-    console.log(`Posted Stripe receipt for Firebase UID ${firebaseUID} (Stripe customer ${stripeCustomerId}) to RevenueCat`);
+    console.log(`Set stripe_customer_id attribute on Firebase UID ${firebaseUID} in RevenueCat`);
     return true;
   } catch (err) {
-    console.error('Error posting receipt to RevenueCat:', err);
+    console.error('Error linking to RevenueCat:', err);
     return false;
   }
 }
