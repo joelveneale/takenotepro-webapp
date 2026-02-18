@@ -29,13 +29,14 @@ async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
 
   try {
     // Post the Stripe receipt/token to RevenueCat so it knows this user has a Stripe subscription
+    // The receipts endpoint requires a public API key, not secret
     const response = await fetch(
       `https://api.revenuecat.com/v1/receipts`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${REVENUECAT_API_KEY}`,
+          'Authorization': `Bearer ${process.env.REVENUECAT_STRIPE_PUBLIC_KEY}`,
           'X-Platform': 'stripe',
         },
         body: JSON.stringify({
