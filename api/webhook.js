@@ -1,9 +1,11 @@
-// This endpoint receives webhooks from Stripe and updates Firestore
+// /api/webhook.js
+// Combined webhook: updates Firestore (for web Pro status) AND links to RevenueCat (for mobile Pro status)
 import Stripe from 'stripe';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const REVENUECAT_API_KEY = process.env.REVENUECAT_SECRET_KEY;
 
 // Initialize Firebase Admin (only once)
 if (!getApps().length) {
@@ -11,7 +13,6 @@ if (!getApps().length) {
     credential: cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      // Replace literal \n in the private key with actual newlines
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
   });
@@ -19,13 +20,53 @@ if (!getApps().length) {
 
 const db = getFirestore();
 
+// Link Stripe customer to RevenueCat using Firebase UID
+async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
+  if (!REVENUECAT_API_KEY) {
+    console.warn('REVENUECAT_SECRET_KEY not configured, skipping RevenueCat link');
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${firebaseUID}/attributes`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${REVENUECAT_API_KEY}`,
+          'X-Platform': 'stripe',
+        },
+        body: JSON.stringify({
+          attributes: {
+            '$stripeCustomerId': {
+              value: stripeCustomerId,
+            },
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('RevenueCat API error:', response.status, text);
+      return false;
+    }
+
+    console.log(`Linked Firebase UID ${firebaseUID} to Stripe customer ${stripeCustomerId} in RevenueCat`);
+    return true;
+  } catch (err) {
+    console.error('Error linking to RevenueCat:', err);
+    return false;
+  }
+}
+
 export const config = {
   api: {
-    bodyParser: false, // Stripe needs raw body for signature verification
+    bodyParser: false,
   },
 };
 
-// Helper to get raw body
 async function getRawBody(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -35,7 +76,6 @@ async function getRawBody(req) {
 }
 
 export default async function handler(req, res) {
-  // Only allow POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -51,10 +91,7 @@ export default async function handler(req, res) {
   let event;
 
   try {
-    // Get raw body for signature verification
     const rawBody = await getRawBody(req);
-    
-    // Verify webhook signature
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (err) {
     console.error(`Webhook signature verification failed: ${err.message}`);
@@ -64,24 +101,29 @@ export default async function handler(req, res) {
   console.log(`Received event: ${event.type}`);
 
   try {
-    // Handle the event
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object;
-        const userId = session.metadata.userId;
+        const userId = session.metadata?.firebaseUID || session.metadata?.userId;
         const customerId = session.customer;
 
         console.log(`Checkout completed for user: ${userId}`);
 
-        // Update user to Pro in Firestore
-        await db.collection('users').doc(userId).update({
-          subscriptionTier: 'pro',
-          subscriptionStatus: 'active',
-          stripeCustomerId: customerId,
-          updatedAt: new Date().toISOString(),
-        });
+        // 1. Update Firestore (web Pro status)
+        if (userId) {
+          await db.collection('users').doc(userId).set({
+            subscriptionTier: 'pro',
+            subscriptionStatus: 'active',
+            stripeCustomerId: customerId,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+          console.log(`Updated user ${userId} to Pro in Firestore`);
+        }
 
-        console.log(`Updated user ${userId} to Pro`);
+        // 2. Link to RevenueCat (mobile Pro status)
+        if (userId && customerId) {
+          await linkStripeToRevenueCat(userId, customerId);
+        }
         break;
       }
 
@@ -89,6 +131,7 @@ export default async function handler(req, res) {
         const subscription = event.data.object;
         const customerId = subscription.customer;
         const status = subscription.status;
+        const firebaseUID = subscription.metadata?.firebaseUID;
 
         console.log(`Subscription updated for customer: ${customerId}, status: ${status}`);
 
@@ -101,21 +144,19 @@ export default async function handler(req, res) {
         if (!userSnapshot.empty) {
           const userDoc = userSnapshot.docs[0];
           const userId = userDoc.id;
-
-          // Determine tier based on status
-          // Active statuses keep Pro, anything else reverts to Free
           const tier = ['active', 'trialing'].includes(status) ? 'pro' : 'free';
 
-          // Update subscription status
           await userDoc.ref.update({
             subscriptionStatus: status,
             subscriptionTier: tier,
             updatedAt: new Date().toISOString(),
           });
-
           console.log(`Updated user ${userId} subscription status to: ${status}, tier: ${tier}`);
-        } else {
-          console.warn(`No user found with stripeCustomerId: ${customerId}`);
+        }
+
+        // Also update RevenueCat link if we have the UID
+        if (firebaseUID && customerId) {
+          await linkStripeToRevenueCat(firebaseUID, customerId);
         }
         break;
       }
@@ -126,7 +167,6 @@ export default async function handler(req, res) {
 
         console.log(`Subscription deleted for customer: ${customerId}`);
 
-        // Find user by Stripe customer ID
         const userSnapshot = await db.collection('users')
           .where('stripeCustomerId', '==', customerId)
           .limit(1)
@@ -136,16 +176,12 @@ export default async function handler(req, res) {
           const userDoc = userSnapshot.docs[0];
           const userId = userDoc.id;
 
-          // Revert to free tier
           await userDoc.ref.update({
             subscriptionStatus: 'canceled',
             subscriptionTier: 'free',
             updatedAt: new Date().toISOString(),
           });
-
           console.log(`Reverted user ${userId} to free tier`);
-        } else {
-          console.warn(`No user found with stripeCustomerId: ${customerId}`);
         }
         break;
       }
@@ -156,7 +192,6 @@ export default async function handler(req, res) {
 
         console.log(`Payment failed for customer: ${customerId}`);
 
-        // Find user by Stripe customer ID
         const userSnapshot = await db.collection('users')
           .where('stripeCustomerId', '==', customerId)
           .limit(1)
@@ -164,19 +199,12 @@ export default async function handler(req, res) {
 
         if (!userSnapshot.empty) {
           const userDoc = userSnapshot.docs[0];
-          const userId = userDoc.id;
-
-          // Update status to indicate payment issue
-          // Don't immediately downgrade - Stripe will retry
           await userDoc.ref.update({
             subscriptionStatus: 'past_due',
             lastPaymentFailed: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           });
-
-          console.log(`Marked user ${userId} subscription as past_due`);
-        } else {
-          console.warn(`No user found with stripeCustomerId: ${customerId}`);
+          console.log(`Marked user ${userDoc.id} subscription as past_due`);
         }
         break;
       }
@@ -187,7 +215,6 @@ export default async function handler(req, res) {
 
         console.log(`Payment succeeded for customer: ${customerId}`);
 
-        // Find user by Stripe customer ID
         const userSnapshot = await db.collection('users')
           .where('stripeCustomerId', '==', customerId)
           .limit(1)
@@ -195,19 +222,13 @@ export default async function handler(req, res) {
 
         if (!userSnapshot.empty) {
           const userDoc = userSnapshot.docs[0];
-          const userId = userDoc.id;
-
-          // Ensure they're active Pro
           await userDoc.ref.update({
             subscriptionStatus: 'active',
             subscriptionTier: 'pro',
             lastPaymentSucceeded: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           });
-
-          console.log(`Confirmed user ${userId} Pro status after successful payment`);
-        } else {
-          console.warn(`No user found with stripeCustomerId: ${customerId}`);
+          console.log(`Confirmed user ${userDoc.id} Pro status after successful payment`);
         }
         break;
       }
@@ -216,7 +237,6 @@ export default async function handler(req, res) {
         console.log(`Unhandled event type: ${event.type}`);
     }
 
-    // Return 200 to acknowledge receipt
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('Error handling webhook:', error);
