@@ -28,17 +28,31 @@ async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
   }
 
   try {
-    // Use RevenueCat's REST API to set the Stripe customer ID on this subscriber
-    // This links the Firebase user to their Stripe subscription so RevenueCat
-    // can automatically grant entitlements from Stripe purchases
-    const response = await fetch(
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
+    };
+
+    // Step 1: Create/get the subscriber (GET auto-creates if not found)
+    const getResponse = await fetch(
+      `https://api.revenuecat.com/v1/subscribers/${firebaseUID}`,
+      { method: 'GET', headers }
+    );
+
+    if (!getResponse.ok) {
+      const text = await getResponse.text();
+      console.error('RevenueCat get subscriber error:', getResponse.status, text);
+      return false;
+    }
+
+    console.log(`Subscriber ${firebaseUID} exists/created in RevenueCat`);
+
+    // Step 2: Set the Stripe customer ID attribute
+    const attrResponse = await fetch(
       `https://api.revenuecat.com/v1/subscribers/${firebaseUID}/attributes`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
-        },
+        headers,
         body: JSON.stringify({
           attributes: {
             'stripe_customer_id': {
@@ -49,13 +63,13 @@ async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
       }
     );
 
-    if (!response.ok) {
-      const text = await response.text();
-      console.error('RevenueCat attributes API error:', response.status, text);
+    if (!attrResponse.ok) {
+      const text = await attrResponse.text();
+      console.error('RevenueCat attributes API error:', attrResponse.status, text);
       return false;
     }
 
-    console.log(`Set stripe_customer_id attribute on Firebase UID ${firebaseUID} in RevenueCat`);
+    console.log(`Linked Firebase UID ${firebaseUID} to Stripe customer ${stripeCustomerId} in RevenueCat`);
     return true;
   } catch (err) {
     console.error('Error linking to RevenueCat:', err);
