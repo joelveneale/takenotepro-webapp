@@ -28,8 +28,9 @@ async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
   }
 
   try {
+    // Post the Stripe receipt/token to RevenueCat so it knows this user has a Stripe subscription
     const response = await fetch(
-      `https://api.revenuecat.com/v1/subscribers/${firebaseUID}/attributes`,
+      `https://api.revenuecat.com/v1/receipts`,
       {
         method: 'POST',
         headers: {
@@ -38,25 +39,22 @@ async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
           'X-Platform': 'stripe',
         },
         body: JSON.stringify({
-          attributes: {
-            '$stripeCustomerId': {
-              value: stripeCustomerId,
-            },
-          },
+          app_user_id: firebaseUID,
+          fetch_token: stripeCustomerId,
         }),
       }
     );
 
     if (!response.ok) {
       const text = await response.text();
-      console.error('RevenueCat API error:', response.status, text);
+      console.error('RevenueCat receipts API error:', response.status, text);
       return false;
     }
 
-    console.log(`Linked Firebase UID ${firebaseUID} to Stripe customer ${stripeCustomerId} in RevenueCat`);
+    console.log(`Posted Stripe receipt for Firebase UID ${firebaseUID} (Stripe customer ${stripeCustomerId}) to RevenueCat`);
     return true;
   } catch (err) {
-    console.error('Error linking to RevenueCat:', err);
+    console.error('Error posting receipt to RevenueCat:', err);
     return false;
   }
 }
