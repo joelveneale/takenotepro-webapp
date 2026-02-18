@@ -143,6 +143,7 @@ export default async function handler(req, res) {
         break;
       }
 
+      case 'customer.subscription.created':
       case 'customer.subscription.updated': {
         const subscription = event.data.object;
         const customerId = subscription.customer;
