@@ -20,59 +20,40 @@ if (!getApps().length) {
 
 const db = getFirestore();
 
-// Link Stripe customer to RevenueCat using Firebase UID
-async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
-  if (!process.env.REVENUECAT_SECRET_KEY) {
-    console.warn('REVENUECAT_SECRET_KEY not configured, skipping RevenueCat link');
+// Post Stripe subscription to RevenueCat to grant entitlement
+async function postStripeReceiptToRevenueCat(firebaseUID, stripeSubscriptionId) {
+  if (!process.env.REVENUECAT_STRIPE_PUBLIC_KEY) {
+    console.warn('REVENUECAT_STRIPE_PUBLIC_KEY not configured, skipping RevenueCat receipt post');
     return false;
   }
 
   try {
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.REVENUECAT_SECRET_KEY}`,
-    };
-
-    // Step 1: Create/get the subscriber (GET auto-creates if not found)
-    const getResponse = await fetch(
-      `https://api.revenuecat.com/v1/subscribers/${firebaseUID}`,
-      { method: 'GET', headers }
-    );
-
-    if (!getResponse.ok) {
-      const text = await getResponse.text();
-      console.error('RevenueCat get subscriber error:', getResponse.status, text);
-      return false;
-    }
-
-    console.log(`Subscriber ${firebaseUID} exists/created in RevenueCat`);
-
-    // Step 2: Set the Stripe customer ID attribute
-    const attrResponse = await fetch(
-      `https://api.revenuecat.com/v1/subscribers/${firebaseUID}/attributes`,
+    const response = await fetch(
+      'https://api.revenuecat.com/v1/receipts',
       {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Platform': 'stripe',
+          'Authorization': `Bearer ${process.env.REVENUECAT_STRIPE_PUBLIC_KEY}`,
+        },
         body: JSON.stringify({
-          attributes: {
-            'stripe_customer_id': {
-              value: stripeCustomerId,
-            },
-          },
+          app_user_id: firebaseUID,
+          fetch_token: stripeSubscriptionId,
         }),
       }
     );
 
-    if (!attrResponse.ok) {
-      const text = await attrResponse.text();
-      console.error('RevenueCat attributes API error:', attrResponse.status, text);
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('RevenueCat receipts API error:', response.status, text);
       return false;
     }
 
-    console.log(`Linked Firebase UID ${firebaseUID} to Stripe customer ${stripeCustomerId} in RevenueCat`);
+    console.log(`Posted Stripe subscription ${stripeSubscriptionId} for Firebase UID ${firebaseUID} to RevenueCat`);
     return true;
   } catch (err) {
-    console.error('Error linking to RevenueCat:', err);
+    console.error('Error posting receipt to RevenueCat:', err);
     return false;
   }
 }
@@ -136,9 +117,10 @@ export default async function handler(req, res) {
           console.log(`Updated user ${userId} to Pro in Firestore`);
         }
 
-        // 2. Link to RevenueCat (mobile Pro status)
-        if (userId && customerId) {
-          await linkStripeToRevenueCat(userId, customerId);
+        // 2. Post to RevenueCat (mobile Pro status)
+        const subscriptionId = session.subscription;
+        if (userId && subscriptionId) {
+          await postStripeReceiptToRevenueCat(userId, subscriptionId);
         }
         break;
       }
@@ -171,9 +153,10 @@ export default async function handler(req, res) {
           console.log(`Updated user ${userId} subscription status to: ${status}, tier: ${tier}`);
         }
 
-        // Also update RevenueCat link if we have the UID
-        if (firebaseUID && customerId) {
-          await linkStripeToRevenueCat(firebaseUID, customerId);
+        // Also post to RevenueCat if we have the UID
+        const subId = subscription.id;
+        if (firebaseUID && subId) {
+          await postStripeReceiptToRevenueCat(firebaseUID, subId);
         }
         break;
       }
