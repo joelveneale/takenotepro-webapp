@@ -22,8 +22,8 @@ const db = getFirestore();
 
 // Link Stripe customer to RevenueCat using Firebase UID
 async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
-  if (!REVENUECAT_API_KEY) {
-    console.warn('REVENUECAT_SECRET_KEY not configured, skipping RevenueCat link');
+  if (!process.env.REVENUECAT_STRIPE_PUBLIC_KEY) {
+    console.warn('REVENUECAT_STRIPE_PUBLIC_KEY not configured, skipping RevenueCat link');
     return false;
   }
 
