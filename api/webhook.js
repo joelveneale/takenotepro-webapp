@@ -37,7 +37,6 @@ async function linkStripeToRevenueCat(firebaseUID, stripeCustomerId) {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.REVENUECAT_STRIPE_PUBLIC_KEY}`,
-          'X-Platform': 'stripe',
         },
         body: JSON.stringify({
           app_user_id: firebaseUID,
