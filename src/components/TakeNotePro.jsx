@@ -1145,6 +1145,15 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               Manage Plan
             </button>
           )}
+          {!isPro && (
+            <button onClick={onShowPricing} style={{
+              ...S.btn, background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
+              color: '#000', fontSize: '10px', fontWeight: '700',
+              padding: '4px 10px', borderRadius: '4px', letterSpacing: '0.05em'
+            }}>
+              ⚡ Upgrade
+            </button>
+          )}
           <button onClick={onLogout} style={{
             ...S.btn, background: 'transparent', color: '#666', fontSize: '10px',
             padding: '4px 8px', border: '1px solid #333', borderRadius: '4px'
