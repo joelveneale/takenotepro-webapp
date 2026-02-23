@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { jsPDF } from 'jspdf';
 import { saveSessionToFirestore, loadUserSessions, deleteSessionFromFirestore, fetchSessionFromFirestore, mergeSessionData } from '../services/sessions';
+import { getAuth, deleteUser } from 'firebase/auth';
+import { getFirestore, collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
@@ -414,6 +416,41 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   // Saving indicator
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Delete account handler
+  const handleDeleteAccount = async () => {
+    if (!user) return;
+    setIsDeleting(true);
+    try {
+      const uid = user.uid;
+      const db = getFirestore();
+      // Delete all user sessions from Firestore
+      const sessionsRef = collection(db, 'users', uid, 'sessions');
+      const sessionsSnap = await getDocs(sessionsRef);
+      for (const sessionDoc of sessionsSnap.docs) {
+        await deleteDoc(sessionDoc.ref);
+      }
+      // Delete user document
+      await deleteDoc(doc(db, 'users', uid));
+      // Delete Firebase Auth account
+      const auth = getAuth();
+      await deleteUser(auth.currentUser);
+      // Clear local storage
+      localStorage.clear();
+      setShowDeleteConfirm(false);
+    } catch (err) {
+      console.error('Error deleting account:', err);
+      if (err.code === 'auth/requires-recent-login') {
+        alert('For security, please sign out and sign back in, then try deleting your account again.');
+      } else {
+        alert('Failed to delete account. Please try again.');
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Online/offline tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -1145,20 +1182,17 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               Manage Plan
             </button>
           )}
-          {!isPro && (
-            <button onClick={onShowPricing} style={{
-              ...S.btn, background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
-              color: '#000', fontSize: '10px', fontWeight: '700',
-              padding: '4px 10px', borderRadius: '4px', letterSpacing: '0.05em'
-            }}>
-              ⚡ Upgrade
-            </button>
-          )}
           <button onClick={onLogout} style={{
             ...S.btn, background: 'transparent', color: '#666', fontSize: '10px',
             padding: '4px 8px', border: '1px solid #333', borderRadius: '4px'
           }}>
             Logout
+          </button>
+          <button onClick={() => setShowDeleteConfirm(true)} style={{
+            ...S.btn, background: 'transparent', color: '#ff4444', fontSize: '10px',
+            padding: '4px 8px', border: '1px solid rgba(255, 68, 68, 0.3)', borderRadius: '4px'
+          }}>
+            Delete Account
           </button>
         </div>
       </header>
@@ -2088,6 +2122,83 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       {/* ─── DOCUMENT VIEWER ───────────────────────────────────────── */}
       {viewingDocument && (
         <PdfViewer document={viewingDocument} onClose={() => setViewingDocument(null)} />
+      )}
+
+      {/* ─── DELETE ACCOUNT CONFIRMATION ─────────────────────────────── */}
+      {showDeleteConfirm && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.9)',
+          zIndex: 3500,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div style={{
+            background: '#1a1a1e',
+            borderRadius: '16px',
+            padding: '28px',
+            maxWidth: '380px',
+            width: '100%',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '36px', marginBottom: '16px' }}>⚠️</div>
+            <h3 style={{
+              color: '#fff',
+              fontSize: '18px',
+              fontWeight: '700',
+              fontFamily: "'Outfit', sans-serif",
+              margin: '0 0 12px 0'
+            }}>
+              Delete Account?
+            </h3>
+            <p style={{
+              color: '#888',
+              fontSize: '13px',
+              lineHeight: '1.6',
+              marginBottom: '24px'
+            }}>
+              This will permanently delete your account, all sessions, notes, and data. This action cannot be undone. Active subscriptions should be cancelled separately through Manage Plan.
+            </p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                style={{
+                  ...S.btn,
+                  flex: 1,
+                  padding: '14px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  background: '#2a2a2e',
+                  color: '#fff',
+                  borderRadius: '10px'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={isDeleting}
+                style={{
+                  ...S.btn,
+                  flex: 1,
+                  padding: '14px',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  background: isDeleting ? '#333' : '#ff4444',
+                  color: '#fff',
+                  borderRadius: '10px',
+                  cursor: isDeleting ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ─── ANIMATIONS ────────────────────────────────────────────── */}
