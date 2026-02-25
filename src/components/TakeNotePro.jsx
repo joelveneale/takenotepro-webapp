@@ -6,8 +6,8 @@ import { getFirestore, collection, getDocs, deleteDoc, doc } from 'firebase/fire
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
-const FREE_MAX_SESSIONS = 1;
-const FREE_MAX_NOTES = 20;
+const FREE_MAX_SESSIONS = Infinity;
+const FREE_MAX_NOTES = Infinity;
 
 const DEFAULT_MICS = () => [
   { id: 1, number: 1, assignments: [{ name: '', timecode: null, image: null }], frequency: '' },
@@ -396,6 +396,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
 
   // Notes state
   const [notes, setNotes] = useState([]);
+  const [deletedNoteIds, setDeletedNoteIds] = useState(new Set());
   const [quickNote, setQuickNote] = useState('');
   const [longNote, setLongNote] = useState('');
   const [longNoteStartTC, setLongNoteStartTC] = useState(null);
@@ -425,18 +426,18 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     setIsDeleting(true);
     try {
       const uid = user.uid;
-      const db = getFirestore();
+      const firestore = getFirestore();
       // Delete all user sessions from Firestore
-      const sessionsRef = collection(db, 'users', uid, 'sessions');
+      const sessionsRef = collection(firestore, 'users', uid, 'sessions');
       const sessionsSnap = await getDocs(sessionsRef);
       for (const sessionDoc of sessionsSnap.docs) {
         await deleteDoc(sessionDoc.ref);
       }
       // Delete user document
-      await deleteDoc(doc(db, 'users', uid));
+      await deleteDoc(doc(firestore, 'users', uid));
       // Delete Firebase Auth account
-      const auth = getAuth();
-      await deleteUser(auth.currentUser);
+      const authInstance = getAuth();
+      await deleteUser(authInstance.currentUser);
       // Clear local storage
       localStorage.clear();
       setShowDeleteConfirm(false);
@@ -445,7 +446,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       if (err.code === 'auth/requires-recent-login') {
         alert('For security, please sign out and sign back in, then try deleting your account again.');
       } else {
-        alert('Failed to delete account. Please try again.');
+        alert('Failed to delete account: ' + (err.message || 'Please try again.'));
       }
     } finally {
       setIsDeleting(false);
@@ -651,9 +652,12 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   const saveCurrentSession = useCallback(async () => {
     if (!currentSessionId) return;
 
+    // Filter out soft-deleted notes before saving
+    const activeNotes = notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id));
+
     const localSession = {
       id: currentSessionId,
-      notes, mics, metadata: metadataFields, fps,
+      notes: activeNotes, mics, metadata: metadataFields, fps,
       tcOffset: tcOffsetRef.current,
       updatedAt: new Date().toISOString()
     };
@@ -665,8 +669,11 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
         const remote = await fetchSessionFromFirestore(currentSessionId);
         const merged = mergeSessionData(localSession, remote);
 
+        // Filter out any deleted notes that merge may have reinstated
+        merged.notes = merged.notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id));
+
         // If remote had new notes we didn't have, update local state
-        if (remote && merged.notes.length > localSession.notes.length) {
+        if (remote && merged.notes.length > activeNotes.length) {
           setNotes(merged.notes);
         }
 
@@ -704,7 +711,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
         }).catch(() => setIsSaving(false));
       }
     }
-  }, [currentSessionId, notes, mics, metadataFields, fps, user, sessions]);
+  }, [currentSessionId, notes, mics, metadataFields, fps, user, sessions, deletedNoteIds]);
 
   // Auto-save debounced
   useEffect(() => {
@@ -908,7 +915,10 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
 
   const cancelLongNote = () => { setLongNote(''); setLongNoteStartTC(null); setIsLongNoteMode(false); };
 
-  const deleteNote = (id) => { setNotes(prev => prev.filter(n => n.id !== id)); };
+  const deleteNote = (id) => {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, deleted: true } : n));
+    setDeletedNoteIds(prev => new Set([...prev, id]));
+  };
 
   const tcToNumber = (tc) => {
     const parts = tc.replace(';', ':').split(':').map(Number);
@@ -1182,6 +1192,15 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               Manage Plan
             </button>
           )}
+          {!isPro && (
+            <button onClick={onShowPricing} style={{
+              ...S.btn, background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
+              color: '#000', fontSize: '10px', fontWeight: '700',
+              padding: '4px 10px', borderRadius: '4px', letterSpacing: '0.05em'
+            }}>
+              ⚡ Upgrade
+            </button>
+          )}
           <button onClick={onLogout} style={{
             ...S.btn, background: 'transparent', color: '#666', fontSize: '10px',
             padding: '4px 8px', border: '1px solid #333', borderRadius: '4px'
@@ -1189,10 +1208,10 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
             Logout
           </button>
           <button onClick={() => setShowDeleteConfirm(true)} style={{
-            ...S.btn, background: 'transparent', color: '#ff4444', fontSize: '10px',
+            ...S.btn, background: 'transparent', color: '#ff4444', fontSize: '9px',
             padding: '4px 8px', border: '1px solid rgba(255, 68, 68, 0.3)', borderRadius: '4px'
           }}>
-            Delete Account
+            ✕
           </button>
         </div>
       </header>
@@ -1224,7 +1243,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               {currentSessionId ? getCurrentSessionName() : 'No Session'}
             </div>
             <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
-              {notes.length} notes{!isPro && ` / ${FREE_MAX_NOTES} max`} • Tap to manage sessions
+              {notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id)).length} notes • Tap to manage sessions
             </div>
           </div>
         </div>
@@ -1754,7 +1773,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {notes.map((note, index) => (
+                {[...notes].filter(n => !n.deleted && !deletedNoteIds.has(n.id)).reverse().map((note, index) => (
                   <div key={note.id} style={{
                     ...S.card, borderLeft: `3px solid ${note.type === 'quick' ? '#00ff88' : note.type === 'custom' ? '#9966ff' : '#ffaa00'}`
                   }}>
@@ -2160,7 +2179,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               lineHeight: '1.6',
               marginBottom: '24px'
             }}>
-              This will permanently delete your account, all sessions, notes, and data. This action cannot be undone. Active subscriptions should be cancelled separately through Manage Plan.
+              This will permanently delete your account, all sessions, notes, and data. This action cannot be undone. Active subscriptions should be cancelled separately.
             </p>
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
