@@ -32,7 +32,7 @@ const Auth = () => {
       <div className="auth-card">
         <div className="auth-header">
           <div className="auth-logo">
-            <div className="logo-icon">⏱️</div>
+            <img src="/512.png" alt="Take Note Pro" className="logo-icon" />
             <h1>Take Note Pro</h1>
           </div>
           <p className="auth-subtitle">Professional timecode logging for film & TV</p>
@@ -118,13 +118,13 @@ const Auth = () => {
           <div className="auth-features">
             <h3>Start for free</h3>
             <ul>
-              <li>✓ 1 active session</li>
-              <li>✓ Up to 20 notes</li>
+              <li>✓ Unlimited Sessions</li>
+              <li>✓ Unlimited notes</li>
               <li>✓ PDF export</li>
               <li>✓ All timecode formats</li>
             </ul>
             <p className="upgrade-hint">
-              Upgrade to Pro for £4.99/year for unlimited sessions, NLE exports, and more.
+              Upgrade to Pro for £4.99/year for document upload & NLE exports.
             </p>
           </div>
         )}
