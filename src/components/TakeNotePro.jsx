@@ -1207,12 +1207,6 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           }}>
             Logout
           </button>
-          <button onClick={() => setShowDeleteConfirm(true)} style={{
-            ...S.btn, background: 'transparent', color: '#ff4444', fontSize: '9px',
-            padding: '4px 8px', border: '1px solid rgba(255, 68, 68, 0.3)', borderRadius: '4px'
-          }}>
-            ✕
-          </button>
         </div>
       </header>
 
@@ -2133,6 +2127,31 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* Account Section */}
+            <div style={{
+              marginTop: '24px', borderTop: '1px solid #2a2a2e', paddingTop: '20px'
+            }}>
+              <div style={{
+                fontSize: '11px', color: '#666', textTransform: 'uppercase',
+                letterSpacing: '0.1em', marginBottom: '12px'
+              }}>Account</div>
+              <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>
+                {user?.email || 'Signed in'}
+              </p>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={() => { setShowSessionsPanel(false); onLogout(); }} style={{
+                  flex: 1, padding: '12px', fontSize: '13px', fontWeight: '600',
+                  fontFamily: "'Outfit', sans-serif", background: 'transparent',
+                  color: '#888', border: '1px solid #333', borderRadius: '8px', cursor: 'pointer'
+                }}>Sign Out</button>
+                <button onClick={() => setShowDeleteConfirm(true)} style={{
+                  flex: 1, padding: '12px', fontSize: '13px', fontWeight: '600',
+                  fontFamily: "'Outfit', sans-serif", background: 'transparent',
+                  color: '#ff4444', border: '1px solid rgba(255,68,68,0.3)', borderRadius: '8px', cursor: 'pointer'
+                }}>Delete Account</button>
+              </div>
             </div>
           </div>
         </div>
