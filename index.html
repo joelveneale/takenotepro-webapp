@@ -8,6 +8,16 @@
     <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
     <!-- PWA Meta Tags -->
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+
+    <!-- Theme color (matches your dark UI) -->
+    <meta name="theme-color" content="#00ff88">
+
+
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Take Note Pro" />
@@ -15,10 +25,20 @@
     
     <!-- SEO -->
     <meta name="description" content="Professional timecode logging for film and TV production. Capture notes with precise timecode and export to industry-standard NLE formats." />
-    <meta name="keywords" content="timecode, logging, film production, sound recordist, script supervisor, NLE" />
+    <meta name="keywords" content="timecode, logging, film production, sound recordist, script supervisor, NLE, notes" />
     
     <title>Take Note Pro - Timecode Logging for Film & TV</title>
   </head>
+
+  <script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('SW registered:', reg.scope))
+        .catch(err => console.warn('SW registration failed:', err));
+    });
+  }
+</script>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
