@@ -43,11 +43,12 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div style={{
-            width: '48px', height: '48px', borderRadius: '12px', margin: '0 auto 16px',
-            background: 'linear-gradient(145deg, #00ff88, #00cc6a)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '20px', fontWeight: '700', color: '#000'
-          }}>TN</div>
+            width: '72px', height: '72px', borderRadius: '16px', margin: '0 auto 16px',
+            overflow: 'hidden',
+            filter: 'drop-shadow(0 0 12px rgba(0, 255, 136, 0.3))'
+          }}>
+            <img src="/512.png" alt="Take Note Pro" style={{ width: '100%', height: '100%', display: 'block' }} />
+          </div>
           <h1 style={{
             fontSize: '22px', fontWeight: '700', fontFamily: "'Outfit', sans-serif",
             color: '#fff', margin: '0 0 4px 0', letterSpacing: '-0.02em'
@@ -141,7 +142,7 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
         </div>
 
         <p style={{ textAlign: 'center', fontSize: '11px', color: '#444', marginTop: '16px' }}>
-          Free tier: 1 session, 20 notes • Pro: £4.99/year unlimited
+          Free tier: unlimited sessions & notes • Pro: £4.99/year for NLE exports & documents
         </p>
       </div>
     </div>
@@ -171,13 +172,13 @@ const PricingModal = ({ onClose, onCheckout, loading }) => (
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px' }}>
         {[
-          { feature: 'Sessions', free: '1', pro: 'Unlimited' },
-          { feature: 'Notes per session', free: '20', pro: 'Unlimited' },
+          { feature: 'Sessions', free: 'Unlimited', pro: 'Unlimited' },
+          { feature: 'Notes per session', free: 'Unlimited', pro: 'Unlimited' },
           { feature: 'Mic list & metadata', free: '✓', pro: '✓' },
           { feature: 'CSV export', free: '✓', pro: '✓' },
           { feature: 'NLE exports', free: '✗', pro: '✓' },
           { feature: 'Document uploads', free: '✗', pro: '✓' },
-          { feature: 'Cloud sync', free: '✗', pro: '✓' },
+          { feature: 'Cloud sync', free: '✓', pro: '✓' },
         ].map(row => (
           <div key={row.feature} style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
