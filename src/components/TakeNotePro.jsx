@@ -1119,7 +1119,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       padding: '16px',
       paddingTop: '20px',
       paddingBottom: '24px',
-      maxWidth: '680px',
+      maxWidth: '1200px',
       margin: '0 auto',
       overflowX: 'hidden'
     }}>
