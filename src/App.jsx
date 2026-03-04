@@ -144,6 +144,13 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
         <p style={{ textAlign: 'center', fontSize: '11px', color: '#444', marginTop: '16px' }}>
           Free tier: unlimited sessions & notes • Pro: £4.99/year for NLE exports & documents
         </p>
+        <p style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px' }}>
+          <a href="https://takenotepro.app/terms" target="_blank" rel="noopener noreferrer"
+            style={{ color: '#555', textDecoration: 'underline' }}>Terms of Use</a>
+          {' · '}
+          <a href="https://takenotepro.app/privacy" target="_blank" rel="noopener noreferrer"
+            style={{ color: '#555', textDecoration: 'underline' }}>Privacy Policy</a>
+        </p>
       </div>
     </div>
   );
