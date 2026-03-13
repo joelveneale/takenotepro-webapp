@@ -142,7 +142,7 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
         </div>
 
         <p style={{ textAlign: 'center', fontSize: '11px', color: '#444', marginTop: '16px' }}>
-          Free tier: unlimited sessions & notes • Pro: £4.99/year for NLE exports & documents
+          All features free • Cloud sync across devices
         </p>
         <p style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px' }}>
           <a href="https://takenotepro.app/terms" target="_blank" rel="noopener noreferrer"
@@ -156,107 +156,10 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
   );
 };
 
-// ─── PRICING MODAL ────────────────────────────────────────────────────────────
-
-const PricingModal = ({ onClose, onCheckout, loading }) => (
-  <div style={{
-    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-    background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', padding: '20px', zIndex: 3000,
-    fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace"
-  }}>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet" />
-    <div style={{
-      background: '#1a1a1e', border: '1px solid #333', borderRadius: '16px',
-      padding: '32px', maxWidth: '420px', width: '100%'
-    }}>
-      <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '20px', fontWeight: '700', fontFamily: "'Outfit', sans-serif", color: '#fff', margin: '0 0 8px 0' }}>
-          Upgrade to <span style={{ color: '#00ff88' }}>Pro</span>
-        </h2>
-        <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>Unlock the full power of Take Note Pro</p>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '24px' }}>
-        {[
-          { feature: 'Sessions', free: 'Unlimited', pro: 'Unlimited' },
-          { feature: 'Notes per session', free: 'Unlimited', pro: 'Unlimited' },
-          { feature: 'Mic list & metadata', free: '✓', pro: '✓' },
-          { feature: 'CSV export', free: '✓', pro: '✓' },
-          { feature: 'NLE exports', free: '✗', pro: '✓' },
-          { feature: 'Document uploads', free: '✗', pro: '✓' },
-          { feature: 'Cloud sync', free: '✓', pro: '✓' },
-        ].map(row => (
-          <div key={row.feature} style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '6px 0', borderBottom: '1px solid #2a2a2e'
-          }}>
-            <span style={{ fontSize: '12px', color: '#ccc' }}>{row.feature}</span>
-            <div style={{ display: 'flex', gap: '20px' }}>
-              <span style={{ fontSize: '11px', color: '#666', width: '55px', textAlign: 'center' }}>{row.free}</span>
-              <span style={{ fontSize: '11px', color: '#00ff88', width: '55px', textAlign: 'center', fontWeight: '600' }}>{row.pro}</span>
-            </div>
-          </div>
-        ))}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '20px', padding: '4px 0' }}>
-          <span style={{ fontSize: '9px', color: '#555', width: '55px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Free</span>
-          <span style={{ fontSize: '9px', color: '#00ff88', width: '55px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Pro</span>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <button onClick={onCheckout} disabled={loading} style={{
-          width: '100%', padding: '16px', fontSize: '14px', fontWeight: '700',
-          fontFamily: "'Outfit', sans-serif", border: 'none', borderRadius: '8px',
-          background: loading ? '#333' : 'linear-gradient(180deg, #00ff88 0%, #00cc6a 100%)',
-          color: '#000', cursor: loading ? 'wait' : 'pointer'
-        }}>
-          {loading ? 'Redirecting to checkout...' : 'Upgrade — £4.99/year'}
-        </button>
-        <button onClick={onClose} style={{
-          width: '100%', padding: '12px', fontSize: '12px', fontWeight: '600',
-          fontFamily: 'inherit', background: 'transparent', color: '#888',
-          border: '1px solid #444', borderRadius: '6px', cursor: 'pointer'
-        }}>Maybe Later</button>
-      </div>
-    </div>
-  </div>
-);
-
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
 const App = () => {
-  const { user, isPro, loading, error, login, signup, logout } = useAuth();
-  const [showPricing, setShowPricing] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-
-  const handleCheckout = async () => {
-    if (!user) return;
-    setCheckoutLoading(true);
-    try {
-      const response = await fetch('/api/create-checkout-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.uid,
-          email: user.email,
-          priceId: 'price_1SxXzaPh0QnpAWgVjIwM0T0g'
-        })
-      });
-      const data = await response.json();
-
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        alert('Error creating checkout session. Please try again.');
-      }
-    } catch (err) {
-      console.error('Checkout error:', err);
-      alert('Error connecting to payment service. Please try again.');
-    } finally {
-      setCheckoutLoading(false);
-    }
-  };
+  const { user, loading, error, login, signup, logout } = useAuth();
 
   if (loading) {
     return (
@@ -278,21 +181,12 @@ const App = () => {
   }
 
   return (
-    <>
-      <TakeNotePro
-        user={user}
-        isPro={isPro}
-        onShowPricing={() => setShowPricing(true)}
-        onLogout={logout}
-      />
-      {showPricing && (
-        <PricingModal
-          onClose={() => setShowPricing(false)}
-          onCheckout={handleCheckout}
-          loading={checkoutLoading}
-        />
-      )}
-    </>
+    <TakeNotePro
+      user={user}
+      isPro={true}
+      onShowPricing={() => {}}
+      onLogout={logout}
+    />
   );
 };
 

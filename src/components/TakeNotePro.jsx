@@ -1146,15 +1146,6 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           </h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* Tier badge */}
-          <span style={{
-            fontSize: '9px', fontWeight: '700', letterSpacing: '0.1em',
-            textTransform: 'uppercase', padding: '4px 8px', borderRadius: '4px',
-            background: isPro ? '#00ff88' : '#333',
-            color: isPro ? '#000' : '#888'
-          }}>
-            {isPro ? 'PRO' : 'FREE'}
-          </span>
           {/* Status indicator */}
           {!isOnline ? (
             <span style={{
@@ -1170,37 +1161,6 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           <div style={{ fontSize: '11px', color: '#666', letterSpacing: '0.1em', fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
             {fps} FPS
           </div>
-          {/* User menu */}
-          {isPro && (
-            <button onClick={async () => {
-              try {
-                const res = await fetch('/api/create-portal-session', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ email: user?.email })
-                });
-                const data = await res.json();
-                if (data.url) window.location.href = data.url;
-                else alert('Unable to open subscription management. Please try again.');
-              } catch (err) {
-                alert('Unable to open subscription management. Please check your connection.');
-              }
-            }} style={{
-              ...S.btn, background: 'transparent', color: '#00ff88', fontSize: '10px',
-              padding: '4px 8px', border: '1px solid #00ff88', borderRadius: '4px'
-            }}>
-              Manage Plan
-            </button>
-          )}
-          {!isPro && (
-            <button onClick={onShowPricing} style={{
-              ...S.btn, background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
-              color: '#000', fontSize: '10px', fontWeight: '700',
-              padding: '4px 10px', borderRadius: '4px', letterSpacing: '0.05em'
-            }}>
-              ⚡ Upgrade
-            </button>
-          )}
           <button onClick={onLogout} style={{
             ...S.btn, background: 'transparent', color: '#666', fontSize: '10px',
             padding: '4px 8px', border: '1px solid #333', borderRadius: '4px'
@@ -1352,7 +1312,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           { id: 'timecode', label: 'Notes' },
           { id: 'metadata', label: 'Metadata' },
           { id: 'miclist', label: 'Mic List' },
-          { id: 'docs', label: isPro ? 'Docs' : 'Docs 🔒' },
+          { id: 'docs', label: 'Docs' },
           { id: 'log', label: `Log (${notes.length})` }
         ].map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
