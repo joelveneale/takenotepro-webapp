@@ -1678,8 +1678,19 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
                         )}
                         <input type="text" inputMode="numeric"
                           value={String(field.value).padStart(2, '0')}
-                          onChange={(e) => { const val = parseInt(e.target.value.replace(/[^0-9]/g, '')) || 0; setCustomNoteTC(prev => ({ ...prev, [field.key]: Math.min(val, field.max) })); }}
-                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => {
+                            const raw = e.target.value.replace(/[^0-9]/g, '');
+                            const trimmed = raw.slice(-2);
+                            const val = parseInt(trimmed) || 0;
+                            setCustomNoteTC(prev => ({ ...prev, [field.key]: Math.min(val, field.max) }));
+                          }}
+                          onFocus={(e) => { e.target.value = ''; }}
+                          onBlur={(e) => {
+                            const raw = e.target.value.replace(/[^0-9]/g, '');
+                            if (raw === '') return;
+                            const val = Math.min(parseInt(raw) || 0, field.max);
+                            setCustomNoteTC(prev => ({ ...prev, [field.key]: val }));
+                          }}
                           style={{ width: '44px', fontSize: '24px', fontWeight: '300', fontFamily: "'SF Mono', 'Fira Code', monospace", background: '#1a1a1e', border: '1px solid #9966ff', borderRadius: '4px', color: '#9966ff', textAlign: 'center', padding: '4px', outline: 'none' }}
                           maxLength={2}
                         />
