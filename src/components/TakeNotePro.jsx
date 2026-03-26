@@ -413,6 +413,8 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   const [showCustomNote, setShowCustomNote] = useState(false);
   const [customNoteTC, setCustomNoteTC] = useState({ h: 0, m: 0, s: 0, f: 0 });
   const [customNoteText, setCustomNoteText] = useState('');
+  const [customTCEditingField, setCustomTCEditingField] = useState(null);
+  const [customTCEditingValue, setCustomTCEditingValue] = useState('');
 
   // Saving indicator
   const [isSaving, setIsSaving] = useState(false);
@@ -1677,21 +1679,25 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
                           </span>
                         )}
                         <input type="text" inputMode="numeric"
-                          value={String(field.value).padStart(2, '0')}
+                          value={customTCEditingField === field.key ? customTCEditingValue : String(field.value).padStart(2, '0')}
                           onChange={(e) => {
-                            const raw = e.target.value.replace(/[^0-9]/g, '');
-                            const trimmed = raw.slice(-2);
-                            const val = parseInt(trimmed) || 0;
-                            setCustomNoteTC(prev => ({ ...prev, [field.key]: Math.min(val, field.max) }));
+                            const val = e.target.value.replace(/[^0-9]/g, '');
+                            setCustomTCEditingValue(val);
+                            if (val.length >= 2) {
+                              const num = parseInt(val.slice(0, 2), 10) || 0;
+                              setCustomNoteTC(prev => ({ ...prev, [field.key]: Math.min(num, field.max) }));
+                            }
                           }}
-                          onFocus={(e) => { e.target.value = ''; }}
-                          onBlur={(e) => {
-                            const raw = e.target.value.replace(/[^0-9]/g, '');
-                            if (raw === '') return;
-                            const val = Math.min(parseInt(raw) || 0, field.max);
-                            setCustomNoteTC(prev => ({ ...prev, [field.key]: val }));
+                          onFocus={() => { setCustomTCEditingField(field.key); setCustomTCEditingValue(''); }}
+                          onBlur={() => {
+                            if (customTCEditingValue !== '') {
+                              const num = parseInt(customTCEditingValue, 10) || 0;
+                              setCustomNoteTC(prev => ({ ...prev, [field.key]: Math.min(num, field.max) }));
+                            }
+                            setCustomTCEditingField(null);
+                            setCustomTCEditingValue('');
                           }}
-                          style={{ width: '44px', fontSize: '24px', fontWeight: '300', fontFamily: "'SF Mono', 'Fira Code', monospace", background: '#1a1a1e', border: '1px solid #9966ff', borderRadius: '4px', color: '#9966ff', textAlign: 'center', padding: '4px', outline: 'none' }}
+                          style={{ width: '44px', fontSize: '24px', fontWeight: '300', fontFamily: "'SF Mono', 'Fira Code', monospace", background: '#1a1a1e', border: `1px solid ${customTCEditingField === field.key ? '#9966ff' : '#333'}`, borderRadius: '4px', color: '#9966ff', textAlign: 'center', padding: '4px', outline: 'none' }}
                           maxLength={2}
                         />
                       </React.Fragment>
