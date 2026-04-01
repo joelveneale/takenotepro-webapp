@@ -142,7 +142,7 @@ const AuthScreen = ({ onLogin, onSignup, error, loading }) => {
         </div>
 
         <p style={{ textAlign: 'center', fontSize: '11px', color: '#444', marginTop: '16px' }}>
-          All features free • Cloud sync across devices
+          Free on the web • £4.99 one-time on the App Store • No subscriptions
         </p>
         <p style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px' }}>
           <a href="https://takenotepro.app/terms" target="_blank" rel="noopener noreferrer"
