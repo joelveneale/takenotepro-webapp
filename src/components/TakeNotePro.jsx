@@ -741,6 +741,29 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     };
   }, [currentSessionId, sessionsLoaded, saveCurrentSession]);
 
+  // Periodic Firestore sync every 30 seconds
+  useEffect(() => {
+    if (!currentSessionId || !sessionsLoaded || !user) return;
+    const syncInterval = setInterval(async () => {
+      if (!navigator.onLine) return;
+      try {
+        const remote = await fetchSessionFromFirestore(currentSessionId);
+        if (remote) {
+          const localSession = { id: currentSessionId, notes, mics, metadata: metadataFields, fps };
+          const merged = mergeSessionData(localSession, remote);
+          const activeNotes = notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id));
+          merged.notes = merged.notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id));
+          if (merged.notes.length > activeNotes.length) {
+            setNotes(merged.notes);
+          }
+        }
+      } catch (err) {
+        console.warn('Periodic sync error:', err);
+      }
+    }, 30000);
+    return () => clearInterval(syncInterval);
+  }, [currentSessionId, sessionsLoaded, user, notes, mics, metadataFields, fps, deletedNoteIds]);
+
   const loadSession = (sessionId) => {
     if (currentSessionId) saveCurrentSession();
     const session = sessions.find(s => s.id === sessionId);
