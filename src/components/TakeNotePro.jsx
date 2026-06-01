@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { jsPDF } from 'jspdf';
 import { saveSessionToFirestore, loadUserSessions, deleteSessionFromFirestore, fetchSessionFromFirestore, mergeSessionData } from '../services/sessions';
+import { createProject, loadUserProjects, saveProjectToFirestore, deleteProjectFromFirestore, getTodayString, formatDateDisplay, getProjectSessions, findTodaySession, getProjectCalendarData, migrateSessionsToProject } from '../services/projects';
 import { getAuth, deleteUser } from 'firebase/auth';
 import { getFirestore, collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 
@@ -352,6 +353,22 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   const [selectedSessionId, setSelectedSessionId] = useState(null);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
 
+  // Projects state
+  const [projects, setProjects] = useState([]);
+  const [currentProjectId, setCurrentProjectId] = useState(() => {
+    return localStorage.getItem('tnp_currentProjectId') || null;
+  });
+  const [newProjectName, setNewProjectName] = useState('');
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [moveSessionTarget, setMoveSessionTarget] = useState(null);
+
+  // Editable notes state
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
+
   // Timecode state
   const [hours, setHours] = useState(0);
   const [minutes, setMinutes] = useState(0);
@@ -569,86 +586,173 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
 
   // ─── SESSION MANAGEMENT ──────────────────────────────────────────────────
 
-  // Load sessions from Firestore on mount
+  // Load projects and sessions from Firestore on mount
   useEffect(() => {
     if (!user) return;
-    const loadSessions = async () => {
+    const loadData = async () => {
       try {
+        const firestoreProjects = await loadUserProjects(user.uid);
         const firestoreSessions = await loadUserSessions(user.uid);
-        if (firestoreSessions.length > 0) {
-          setSessions(firestoreSessions);
-          setCurrentSessionId(firestoreSessions[0].id);
-          // Load first session data
-          const first = firestoreSessions[0];
-          setNotes(first.notes || []);
-          setMics(first.mics || DEFAULT_MICS());
-          setMetadataFields(first.metadata || DEFAULT_METADATA());
-          if (first.fps) setFps(first.fps);
-          // Restore TC offset from session (Firestore takes priority over localStorage)
-          if (first.tcOffset !== undefined && first.tcOffset !== null) {
-            tcOffsetRef.current = first.tcOffset;
-            try { localStorage.setItem('tnp_tc_offset', String(first.tcOffset)); } catch (e) {}
-            const tc = new Date(Date.now() + first.tcOffset);
-            setHours(tc.getHours());
-            setMinutes(tc.getMinutes());
-            setSeconds(tc.getSeconds());
-            setFrames(Math.floor((tc.getMilliseconds() / 1000) * (first.fps || 25)));
+        
+        if (firestoreProjects.length > 0) {
+          setProjects(firestoreProjects);
+          const migrated = migrateSessionsToProject(firestoreSessions, firestoreProjects[0].id);
+          setSessions(migrated);
+          
+          const savedProjectId = localStorage.getItem('tnp_currentProjectId');
+          const targetProject = savedProjectId && firestoreProjects.find(p => p.id === savedProjectId)
+            ? savedProjectId : firestoreProjects[0].id;
+          
+          selectProject(targetProject, migrated, firestoreProjects);
+        } else if (firestoreSessions.length > 0) {
+          const firstSession = firestoreSessions[0];
+          const defaultProject = {
+            id: `project_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: firstSession.metadata?.find(f => f.id === 'production')?.value || 'My Project',
+            mics: firstSession.mics || DEFAULT_MICS(),
+            metadata: firstSession.metadata || DEFAULT_METADATA(),
+            fps: firstSession.fps || fps,
+            createdAt: new Date().toISOString()
+          };
+          await createProject(user.uid, defaultProject);
+          setProjects([defaultProject]);
+          const migrated = migrateSessionsToProject(firestoreSessions, defaultProject.id);
+          setSessions(migrated);
+          for (const s of migrated) {
+            saveSessionToFirestore(user.uid, { ...s, projectId: defaultProject.id, userId: user.uid });
           }
+          selectProject(defaultProject.id, migrated, [defaultProject]);
         } else {
-          // Create initial session
-          createNewSession(true);
+          setShowSessionsPanel(true);
         }
       } catch (err) {
-        console.error('Error loading sessions:', err);
-        createNewSession(true);
+        console.error('Error loading data:', err);
+        setShowSessionsPanel(true);
       }
       setSessionsLoaded(true);
     };
-    loadSessions();
+    loadData();
   }, [user]);
 
-  const createNewSession = (isFirst = false) => {
-    // Free tier check
-    if (!isFirst && !isPro && sessions.length >= FREE_MAX_SESSIONS) {
-      onShowPricing();
-      return;
+  const selectProject = (projectId, allSessions = sessions, allProjects = projects) => {
+    if (currentSessionId) saveCurrentSession();
+    setCurrentProjectId(projectId);
+    localStorage.setItem('tnp_currentProjectId', projectId);
+    
+    const project = allProjects.find(p => p.id === projectId);
+    if (project) {
+      setMics(project.mics || DEFAULT_MICS());
+      setMetadataFields(project.metadata || DEFAULT_METADATA());
+      if (project.fps) setFps(project.fps);
     }
-
-    // Save current session before creating new one
-    if (currentSessionId && !isFirst) {
-      saveCurrentSession();
+    
+    const today = getTodayString();
+    const todaySession = allSessions.find(s => s.projectId === projectId && s.date === today);
+    if (todaySession) {
+      loadSessionData(todaySession);
+    } else {
+      createDailySession(projectId, project, allSessions);
     }
+  };
 
-    const today = new Date();
-    const defaultName = newSessionName.trim() || `Day ${sessions.length + 1} - ${today.toLocaleDateString()}`;
+  const loadSessionData = (session) => {
+    setCurrentSessionId(session.id);
+    setNotes(session.notes || []);
+    setDeletedNoteIds(new Set());
+    if (session.tcOffset !== undefined && session.tcOffset !== null) {
+      tcOffsetRef.current = session.tcOffset;
+      const tc = new Date(Date.now() + session.tcOffset);
+      setHours(tc.getHours());
+      setMinutes(tc.getMinutes());
+      setSeconds(tc.getSeconds());
+      setFrames(Math.floor((tc.getMilliseconds() / 1000) * (session.fps || fps)));
+    } else {
+      tcOffsetRef.current = 0;
+    }
+  };
 
+  const createDailySession = (projectId, project, allSessions = sessions) => {
+    const today = getTodayString();
+    const projectSessions = allSessions.filter(s => s.projectId === projectId);
+    const dayNumber = projectSessions.length + 1;
+    
     const newSession = {
       id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      name: defaultName,
-      createdAt: today.toISOString(),
+      projectId,
+      date: today,
+      name: `Day ${dayNumber} - ${formatDateDisplay(today)}`,
+      createdAt: new Date().toISOString(),
       userId: user?.uid || null,
       notes: [],
-      mics: DEFAULT_MICS(),
-      metadata: isFirst ? DEFAULT_METADATA() : metadataFields.map(f => ({
-        ...f,
-        value: f.id === 'production' ? f.value : ''
-      })),
-      fps: fps,
-      tcOffset: tcOffsetRef.current
+      mics: project?.mics || mics,
+      metadata: project?.metadata || metadataFields,
+      fps: project?.fps || fps,
+      tcOffset: 0
     };
-
+    
     setSessions(prev => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
     setNotes([]);
-    setMics(newSession.mics);
-    if (isFirst) setMetadataFields(newSession.metadata);
-    setNewSessionName('');
-    setShowSessionsPanel(false);
+    setDeletedNoteIds(new Set());
+    tcOffsetRef.current = 0;
+    
+    if (user) saveSessionToFirestore(user.uid, { ...newSession, userId: user.uid });
+    return newSession;
+  };
 
-    // Save to Firestore
-    if (user) {
-      saveSessionToFirestore(user.uid, newSession);
+  const handleCreateProject = async (name) => {
+    const project = {
+      id: `project_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name: name.trim(),
+      mics: DEFAULT_MICS(),
+      metadata: DEFAULT_METADATA(),
+      fps,
+      createdAt: new Date().toISOString()
+    };
+    if (user) await createProject(user.uid, project);
+    setProjects(prev => [project, ...prev]);
+    setNewProjectName('');
+    selectProject(project.id, sessions, [...projects, project]);
+  };
+
+  const saveProjectMetadata = useCallback(async () => {
+    if (!currentProjectId || !user) return;
+    const project = projects.find(p => p.id === currentProjectId);
+    if (!project) return;
+    const updated = { ...project, mics, metadata: metadataFields, fps, updatedAt: new Date().toISOString() };
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? updated : p));
+    await saveProjectToFirestore(user.uid, updated);
+  }, [currentProjectId, user, projects, mics, metadataFields, fps]);
+
+  useEffect(() => {
+    if (!currentProjectId || !sessionsLoaded) return;
+    const timeout = setTimeout(() => saveProjectMetadata(), 3000);
+    return () => clearTimeout(timeout);
+  }, [mics, metadataFields, fps, currentProjectId, sessionsLoaded]);
+
+  const editNote = (noteId, newText) => {
+    setNotes(prev => prev.map(n => 
+      n.id === noteId ? { ...n, note: newText, editedAt: new Date().toISOString() } : n
+    ));
+    setEditingNoteId(null);
+    setEditingNoteText('');
+  };
+
+  const handleMoveSession = async (sessionId, targetProjectId) => {
+    setSessions(prev => prev.map(s => 
+      s.id === sessionId ? { ...s, projectId: targetProjectId, updatedAt: new Date().toISOString() } : s
+    ));
+    const session = sessions.find(s => s.id === sessionId);
+    if (session && user) {
+      saveSessionToFirestore(user.uid, { ...session, projectId: targetProjectId, userId: user.uid, updatedAt: new Date().toISOString() });
     }
+    setMoveSessionTarget(null);
+  };
+
+  const createNewSession = (isFirst = false) => {
+    if (!currentProjectId && !isFirst) return;
+    const project = projects.find(p => p.id === currentProjectId);
+    createDailySession(currentProjectId || 'default', project);
   };
 
   const saveCurrentSession = useCallback(async () => {
@@ -657,8 +761,11 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     // Filter out soft-deleted notes before saving
     const activeNotes = notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id));
 
+    const currentSession = sessions.find(s => s.id === currentSessionId);
     const localSession = {
       id: currentSessionId,
+      projectId: currentSession?.projectId || currentProjectId,
+      date: currentSession?.date || getTodayString(),
       notes: activeNotes, mics, metadata: metadataFields, fps,
       tcOffset: tcOffsetRef.current,
       updatedAt: new Date().toISOString()
@@ -968,8 +1075,14 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
   // ─── EXPORT FUNCTIONS ───────────────────────────────────────────────────
 
   const generateCSV = () => {
-    const headers = ['Timecode In', 'Timecode Out', 'Note', 'Type', ...metadataFields.map(f => f.label), 'FPS', 'Timestamp'];
-    const rows = notes.map(note => [
+    const projectName = projects.find(p => p.id === currentProjectId)?.name || 'Untitled';
+    const currentSession = sessions.find(s => s.id === currentSessionId);
+    const sessionDate = currentSession?.date || getTodayString();
+    
+    const headers = ['Project', 'Date', 'Timecode In', 'Timecode Out', 'Note', 'Type', ...metadataFields.map(f => f.label), 'FPS', 'Timestamp'];
+    const activeNotes = notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id));
+    const rows = activeNotes.map(note => [
+      `"${projectName}"`, sessionDate,
       note.timecodeIn, note.timecodeOut,
       `"${note.note.replace(/"/g, '""')}"`, note.type,
       ...metadataFields.map(f => `"${f.value.replace(/"/g, '""')}"`),
@@ -1219,10 +1332,14 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
           <span style={{ fontSize: '14px' }}>📁</span>
           <div>
             <div style={{ fontSize: '13px', fontWeight: '600', color: '#fff', fontFamily: "'Outfit', sans-serif" }}>
-              {currentSessionId ? getCurrentSessionName() : 'No Session'}
+              {projects.find(p => p.id === currentProjectId)?.name || 'No Project'}
             </div>
             <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
-              {notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id)).length} notes • Tap to manage sessions
+              {(() => {
+                const cs = sessions.find(s => s.id === currentSessionId);
+                const dateStr = cs?.date ? formatDateDisplay(cs.date) : 'Today';
+                return `${dateStr} • ${notes.filter(n => !n.deleted && !deletedNoteIds.has(n.id)).length} notes`;
+              })()}
             </div>
           </div>
         </div>
@@ -1776,11 +1893,40 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
                         {note.timecodeIn}
                         {note.timecodeIn !== note.timecodeOut && <span style={{ color: '#666' }}> → {note.timecodeOut}</span>}
                       </div>
-                      <button onClick={() => deleteNote(note.id)} style={{ ...S.btn, background: 'transparent', color: '#666', fontSize: '16px', padding: '0 4px', lineHeight: 1 }}>×</button>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button onClick={() => {
+                          if (editingNoteId === note.id) {
+                            editNote(note.id, editingNoteText);
+                          } else {
+                            setEditingNoteId(note.id);
+                            setEditingNoteText(note.note);
+                          }
+                        }} style={{ ...S.btn, background: 'transparent', color: editingNoteId === note.id ? '#00ff88' : '#555', fontSize: '12px', padding: '0 4px' }}>
+                          {editingNoteId === note.id ? '✓' : '✎'}
+                        </button>
+                        <button onClick={() => deleteNote(note.id)} style={{ ...S.btn, background: 'transparent', color: '#666', fontSize: '16px', padding: '0 4px', lineHeight: 1 }}>×</button>
+                      </div>
                     </div>
-                    <div style={{ fontSize: '13px', color: '#ccc', lineHeight: '1.5' }}>{note.note}</div>
+                    {editingNoteId === note.id ? (
+                      <textarea
+                        value={editingNoteText}
+                        onChange={(e) => setEditingNoteText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); editNote(note.id, editingNoteText); }
+                          if (e.key === 'Escape') { setEditingNoteId(null); setEditingNoteText(''); }
+                        }}
+                        autoFocus
+                        style={{
+                          width: '100%', fontSize: '13px', color: '#ccc', lineHeight: '1.5',
+                          background: '#141416', border: '1px solid #00ff88', borderRadius: '4px',
+                          padding: '8px', fontFamily: 'inherit', outline: 'none', resize: 'vertical', minHeight: '40px', boxSizing: 'border-box'
+                        }}
+                      />
+                    ) : (
+                      <div style={{ fontSize: '13px', color: '#ccc', lineHeight: '1.5' }}>{note.note}</div>
+                    )}
                     <div style={{ fontSize: '9px', color: '#444', marginTop: '6px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                      {note.type} note • #{index + 1}
+                      {note.type} note • #{index + 1}{note.editedAt ? ' • edited' : ''}
                     </div>
                   </div>
                 ))}
@@ -2023,133 +2169,170 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
       {showSessionsPanel && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', padding: '20px', zIndex: 1000
+          background: 'rgba(0,0,0,0.95)', zIndex: 2000,
+          overflowY: 'auto', padding: '20px'
         }}>
-          <div style={{
-            background: '#1a1a1e', border: '1px solid #333', borderRadius: '12px',
-            padding: '24px', maxWidth: '500px', width: '100%', maxHeight: '80vh',
-            overflow: 'hidden', display: 'flex', flexDirection: 'column'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ ...S.label, fontSize: '14px', color: '#fff', margin: 0 }}>Sessions</h3>
-              <button onClick={() => setShowSessionsPanel(false)} style={{ ...S.btn, background: 'transparent', color: '#888', fontSize: '18px', padding: '0 4px', lineHeight: 1 }}>×</button>
+          <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '700', fontFamily: "'Outfit', sans-serif", color: '#fff', margin: 0 }}>Projects</h2>
+              <button onClick={() => setShowSessionsPanel(false)} style={{ ...S.btn, background: 'transparent', color: '#888', fontSize: '28px' }}>×</button>
             </div>
 
-            {/* New session */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <input type="text" value={newSessionName} onChange={(e) => setNewSessionName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') createNewSession(); }}
-                placeholder="New session name..."
-                style={{ ...S.input, flex: 1, background: '#141416' }}
-              />
-              <button onClick={() => createNewSession()} style={{
-                ...S.btn, padding: '10px 16px', fontSize: '12px', fontWeight: '600',
-                background: '#00ff88', color: '#000', borderRadius: '4px',
-                opacity: (!isPro && sessions.length >= FREE_MAX_SESSIONS) ? 0.5 : 1
-              }}>
-                + New
-              </button>
+            {/* Project Selector */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ ...S.label, marginBottom: '10px' }}>Switch Project</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {projects.map(project => (
+                  <button key={project.id} onClick={() => { selectProject(project.id); setShowSessionsPanel(false); }} style={{
+                    ...S.btn, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '12px 14px', fontSize: '14px', fontWeight: '600', fontFamily: "'Outfit', sans-serif",
+                    background: project.id === currentProjectId ? 'rgba(0,255,136,0.1)' : '#1a1a1e',
+                    color: project.id === currentProjectId ? '#00ff88' : '#ccc',
+                    border: `1px solid ${project.id === currentProjectId ? '#00ff88' : '#2a2a2e'}`,
+                    borderRadius: '8px', textAlign: 'left', width: '100%'
+                  }}>
+                    <span>{project.name}</span>
+                    <span style={{ fontSize: '11px', color: '#666' }}>{getProjectSessions(sessions, project.id).length} days</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                <input type="text" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="New project name..."
+                  onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim()) handleCreateProject(newProjectName); }}
+                  style={{ flex: 1, padding: '10px', fontSize: '13px', fontFamily: 'inherit', background: '#141416', border: '1px solid #333', borderRadius: '6px', color: '#e8e8e8', outline: 'none' }}
+                />
+                <button onClick={() => { if (newProjectName.trim()) handleCreateProject(newProjectName); }} disabled={!newProjectName.trim()} style={{
+                  ...S.btn, padding: '10px 16px', fontSize: '12px', fontWeight: '600',
+                  background: newProjectName.trim() ? '#00ff88' : '#333',
+                  color: newProjectName.trim() ? '#000' : '#666', borderRadius: '6px'
+                }}>+ New</button>
+              </div>
             </div>
 
-            {!isPro && sessions.length >= FREE_MAX_SESSIONS && (
-              <div style={{
-                background: 'rgba(255,170,0,0.1)', border: '1px solid #ffaa00',
-                borderRadius: '6px', padding: '10px 12px', marginBottom: '12px',
-                fontSize: '11px', color: '#ffaa00', textAlign: 'center'
-              }}>
-                Free tier: {FREE_MAX_SESSIONS} session max. <button onClick={onShowPricing} style={{ ...S.btn, background: 'none', color: '#00ff88', textDecoration: 'underline', fontSize: '11px', padding: 0 }}>Upgrade to Pro</button>
+            {/* Calendar */}
+            {currentProjectId && (
+              <div style={{ ...S.card, marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                  <button onClick={() => setCalendarMonth(prev => { const d = new Date(prev.year, prev.month - 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })} style={{ ...S.btn, background: 'transparent', color: '#888', fontSize: '18px' }}>‹</button>
+                  <span style={{ fontSize: '14px', fontWeight: '600', color: '#fff', fontFamily: "'Outfit', sans-serif" }}>
+                    {new Date(calendarMonth.year, calendarMonth.month).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+                  </span>
+                  <button onClick={() => setCalendarMonth(prev => { const d = new Date(prev.year, prev.month + 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })} style={{ ...S.btn, background: 'transparent', color: '#888', fontSize: '18px' }}>›</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '4px' }}>
+                  {['M','T','W','T','F','S','S'].map((d,i) => (
+                    <div key={i} style={{ textAlign: 'center', fontSize: '10px', color: '#555', padding: '4px 0', fontWeight: '600' }}>{d}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                  {(() => {
+                    const calendarData = getProjectCalendarData(sessions, currentProjectId);
+                    const today = getTodayString();
+                    const firstDay = new Date(calendarMonth.year, calendarMonth.month, 1);
+                    const lastDay = new Date(calendarMonth.year, calendarMonth.month + 1, 0);
+                    const startPad = (firstDay.getDay() + 6) % 7;
+                    const cells = [];
+                    for (let i = 0; i < startPad; i++) cells.push(null);
+                    for (let d = 1; d <= lastDay.getDate(); d++) cells.push(d);
+                    return cells.map((day, i) => {
+                      if (!day) return <div key={`pad-${i}`} />;
+                      const dateStr = `${calendarMonth.year}-${String(calendarMonth.month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                      const hasSession = calendarData[dateStr];
+                      const isToday = dateStr === today;
+                      const isActive = sessions.find(s => s.id === currentSessionId)?.date === dateStr;
+                      return (
+                        <button key={dateStr} onClick={() => {
+                          const session = sessions.find(s => s.projectId === currentProjectId && s.date === dateStr);
+                          if (session) { loadSessionData(session); setShowSessionsPanel(false); }
+                        }} style={{
+                          ...S.btn, width: '100%', aspectRatio: '1', display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: isToday ? '700' : '400',
+                          background: isActive ? '#00ff88' : hasSession ? 'rgba(0,255,136,0.15)' : 'transparent',
+                          color: isActive ? '#000' : isToday ? '#00ff88' : hasSession ? '#ccc' : '#555',
+                          border: isToday && !isActive ? '1px solid #00ff88' : '1px solid transparent',
+                          borderRadius: '6px', cursor: hasSession ? 'pointer' : 'default', opacity: hasSession ? 1 : 0.5
+                        }}>
+                          {day}
+                          {hasSession && <div style={{ fontSize: '7px', color: isActive ? '#000' : '#00ff88', marginTop: '1px' }}>{hasSession.noteCount}n</div>}
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
             )}
 
             {/* Session list */}
-            <div style={{ flex: 1, overflow: 'auto' }}>
-              {sessions.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#555', padding: '20px' }}>No sessions yet</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {sessions.map(session => {
-                    const isActive = session.id === currentSessionId;
-                    const isSelected = session.id === selectedSessionId;
-                    return (
-                      <div key={session.id} onClick={() => setSelectedSessionId(isSelected ? null : session.id)} style={{
-                        ...S.card, cursor: 'pointer',
-                        border: `1px solid ${isActive ? '#00ff88' : isSelected ? '#555' : '#2a2a2e'}`
+            {currentProjectId && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ ...S.label, marginBottom: '10px' }}>Sessions</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {getProjectSessions(sessions, currentProjectId).map(session => (
+                    <div key={session.id} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px',
+                      background: session.id === currentSessionId ? 'rgba(0,255,136,0.08)' : '#1a1a1e',
+                      border: `1px solid ${session.id === currentSessionId ? 'rgba(0,255,136,0.3)' : '#2a2a2e'}`, borderRadius: '6px'
+                    }}>
+                      <button onClick={() => { loadSessionData(session); setShowSessionsPanel(false); }} style={{
+                        ...S.btn, flex: 1, background: 'transparent', textAlign: 'left', padding: 0
                       }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div>
-                            <div style={{ fontSize: '13px', fontWeight: '600', color: '#fff', fontFamily: "'Outfit', sans-serif" }}>
-                              {isActive && <span style={{ color: '#00ff88', marginRight: '6px' }}>●</span>}
-                              {session.name}
-                            </div>
-                            <div style={{ fontSize: '10px', color: '#666', marginTop: '4px' }}>
-                              {(session.notes || []).length} notes • {new Date(session.createdAt).toLocaleDateString()}
-                            </div>
-                          </div>
-                          <div style={{ fontSize: '14px', color: '#666' }}>{isSelected ? '▾' : '›'}</div>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: '#ccc', fontFamily: "'Outfit', sans-serif" }}>
+                          {session.date ? formatDateDisplay(session.date) : session.name || 'Untitled'}
                         </div>
-
-                        {isSelected && (
-                          <div style={{ display: 'flex', borderTop: '1px solid #2a2a2e', marginTop: '12px' }}>
-                            <button onClick={(e) => { e.stopPropagation(); if (isActive) { setShowSessionsPanel(false); } else { loadSession(session.id); } }}
-                              style={{
-                                ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
-                                fontFamily: "'Outfit', sans-serif",
-                                background: isActive ? '#2a2a2e' : '#00ff88',
-                                color: isActive ? '#fff' : '#000',
-                                borderRight: '1px solid #2a2a2e',
-                                cursor: 'pointer'
-                              }}>
-                              {isActive ? 'Open' : 'Load'}
-                            </button>
-                            <button onClick={(e) => {
-                              e.stopPropagation();
-                              const name = prompt('Rename session:', session.name);
-                              if (name?.trim()) renameSession(session.id, name.trim());
-                            }} style={{
-                              ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
-                              fontFamily: "'Outfit', sans-serif",
-                              background: 'transparent', color: '#888', borderRight: '1px solid #2a2a2e'
-                            }}>Rename</button>
-                            <button onClick={(e) => {
-                              e.stopPropagation();
-                              if (sessions.length > 1 && confirm('Delete session?')) { deleteSession(session.id); setSelectedSessionId(null); }
-                              else if (sessions.length <= 1) alert('Cannot delete the only session.');
-                            }} style={{
-                              ...S.btn, flex: 1, padding: '12px', fontSize: '12px', fontWeight: '600',
-                              fontFamily: "'Outfit', sans-serif",
-                              background: 'transparent', color: '#ff6666'
-                            }}>Delete</button>
-                          </div>
+                        <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
+                          {(session.notes || []).filter(n => !n.deleted).length} notes
+                        </div>
+                      </button>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {projects.length > 1 && (
+                          <button onClick={() => setMoveSessionTarget(moveSessionTarget === session.id ? null : session.id)} style={{ ...S.btn, background: 'transparent', color: '#555', fontSize: '14px' }}>↗</button>
                         )}
+                        <button onClick={() => {
+                          if (confirm('Delete this session?')) {
+                            setSessions(prev => prev.filter(s => s.id !== session.id));
+                            if (user) deleteSessionFromFirestore(user.uid, session.id);
+                            if (session.id === currentSessionId) {
+                              const remaining = sessions.filter(s => s.id !== session.id && s.projectId === currentProjectId);
+                              if (remaining.length > 0) loadSessionData(remaining[0]);
+                            }
+                          }
+                        }} style={{ ...S.btn, background: 'transparent', color: '#ff4444', fontSize: '14px' }}>×</button>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
+                  {moveSessionTarget && (
+                    <div style={{ background: '#141416', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginTop: '4px' }}>
+                      <div style={{ fontSize: '10px', color: '#888', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Move to project:</div>
+                      {projects.filter(p => p.id !== currentProjectId).map(p => (
+                        <button key={p.id} onClick={() => handleMoveSession(moveSessionTarget, p.id)} style={{
+                          ...S.btn, display: 'block', width: '100%', padding: '8px 10px', fontSize: '12px',
+                          background: 'transparent', border: '1px solid #333', borderRadius: '4px',
+                          color: '#ccc', marginBottom: '4px', textAlign: 'left', fontFamily: "'Outfit', sans-serif"
+                        }}>{p.name}</button>
+                      ))}
+                      <button onClick={() => setMoveSessionTarget(null)} style={{ ...S.btn, display: 'block', width: '100%', padding: '6px', fontSize: '11px', background: 'transparent', color: '#666' }}>Cancel</button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Account Section */}
-            <div style={{
-              marginTop: '24px', borderTop: '1px solid #2a2a2e', paddingTop: '20px'
-            }}>
-              <div style={{
-                fontSize: '11px', color: '#666', textTransform: 'uppercase',
-                letterSpacing: '0.1em', marginBottom: '12px'
-              }}>Account</div>
-              <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>
-                {user?.email || 'Signed in'}
-              </p>
+            <div style={{ marginTop: '24px', borderTop: '1px solid #2a2a2e', paddingTop: '20px' }}>
+              <div style={{ ...S.label, marginBottom: '12px' }}>Account</div>
+              <p style={{ fontSize: '12px', color: '#888', marginBottom: '16px' }}>{user?.email || 'Signed in'}</p>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button onClick={() => { setShowSessionsPanel(false); onLogout(); }} style={{
-                  flex: 1, padding: '12px', fontSize: '13px', fontWeight: '600',
-                  fontFamily: "'Outfit', sans-serif", background: 'transparent',
-                  color: '#888', border: '1px solid #333', borderRadius: '8px', cursor: 'pointer'
+                  ...S.btn, flex: 1, padding: '12px', fontSize: '13px', fontWeight: '600',
+                  fontFamily: "'Outfit', sans-serif", background: 'transparent', color: '#888',
+                  border: '1px solid #333', borderRadius: '8px'
                 }}>Sign Out</button>
                 <button onClick={() => setShowDeleteConfirm(true)} style={{
-                  flex: 1, padding: '12px', fontSize: '13px', fontWeight: '600',
-                  fontFamily: "'Outfit', sans-serif", background: 'transparent',
-                  color: '#ff4444', border: '1px solid rgba(255,68,68,0.3)', borderRadius: '8px', cursor: 'pointer'
+                  ...S.btn, flex: 1, padding: '12px', fontSize: '13px', fontWeight: '600',
+                  fontFamily: "'Outfit', sans-serif", background: 'transparent', color: '#ff4444',
+                  border: '1px solid rgba(255,68,68,0.3)', borderRadius: '8px'
                 }}>Delete Account</button>
               </div>
             </div>
