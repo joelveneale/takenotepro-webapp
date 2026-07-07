@@ -364,6 +364,7 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     return { year: now.getFullYear(), month: now.getMonth() };
   });
   const [moveSessionTarget, setMoveSessionTarget] = useState(null);
+  const [editingProjectId, setEditingProjectId] = useState(null);
 
   // Editable notes state
   const [editingNoteId, setEditingNoteId] = useState(null);
@@ -713,6 +714,44 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
     setProjects(prev => [project, ...prev]);
     setNewProjectName('');
     selectProject(project.id, sessions, [...projects, project]);
+  };
+
+  const handleRenameProject = async (projectId, newName) => {
+    if (!newName.trim()) return;
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    const updated = { ...project, name: newName.trim(), updatedAt: new Date().toISOString() };
+    setProjects(prev => prev.map(p => p.id === projectId ? updated : p));
+    if (user) await saveProjectToFirestore(user.uid, updated);
+    setEditingProjectId(null);
+  };
+
+  const handleDeleteProject = async (projectId) => {
+    if (projects.length <= 1) {
+      alert('You must have at least one project.');
+      return;
+    }
+    const project = projects.find(p => p.id === projectId);
+    const projectSessionCount = sessions.filter(s => s.projectId === projectId).length;
+    const msg = projectSessionCount > 0
+      ? `Delete "${project?.name}" and its ${projectSessionCount} session${projectSessionCount > 1 ? 's' : ''}? This cannot be undone.`
+      : `Delete "${project?.name}"? This cannot be undone.`;
+    if (!confirm(msg)) return;
+
+    const projectSessions = sessions.filter(s => s.projectId === projectId);
+    for (const s of projectSessions) {
+      if (user) await deleteSessionFromFirestore(user.uid, s.id);
+    }
+    setSessions(prev => prev.filter(s => s.projectId !== projectId));
+    if (user) await deleteProjectFromFirestore(user.uid, projectId);
+    setProjects(prev => prev.filter(p => p.id !== projectId));
+
+    if (currentProjectId === projectId) {
+      const remaining = projects.filter(p => p.id !== projectId);
+      if (remaining.length > 0) {
+        selectProject(remaining[0].id, sessions.filter(s => s.projectId !== projectId), remaining);
+      }
+    }
   };
 
   const saveProjectMetadata = useCallback(async () => {
@@ -2184,17 +2223,39 @@ const TakeNotePro = ({ user, isPro, onShowPricing, onLogout }) => {
               <div style={{ ...S.label, marginBottom: '10px' }}>Switch Project</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {projects.map(project => (
-                  <button key={project.id} onClick={() => { selectProject(project.id); setShowSessionsPanel(false); }} style={{
-                    ...S.btn, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '12px 14px', fontSize: '14px', fontWeight: '600', fontFamily: "'Outfit', sans-serif",
+                  <div key={project.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
                     background: project.id === currentProjectId ? 'rgba(0,255,136,0.1)' : '#1a1a1e',
-                    color: project.id === currentProjectId ? '#00ff88' : '#ccc',
                     border: `1px solid ${project.id === currentProjectId ? '#00ff88' : '#2a2a2e'}`,
-                    borderRadius: '8px', textAlign: 'left', width: '100%'
+                    borderRadius: '8px', padding: '4px 4px 4px 0', overflow: 'hidden'
                   }}>
-                    <span>{project.name}</span>
-                    <span style={{ fontSize: '11px', color: '#666' }}>{getProjectSessions(sessions, project.id).length} days</span>
-                  </button>
+                    <button onClick={() => { selectProject(project.id); setShowSessionsPanel(false); }} style={{
+                      ...S.btn, flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '8px 10px', fontSize: '14px', fontWeight: '600', fontFamily: "'Outfit', sans-serif",
+                      background: 'transparent', color: project.id === currentProjectId ? '#00ff88' : '#ccc',
+                      textAlign: 'left', width: 'auto'
+                    }}>
+                      {editingProjectId === project.id ? (
+                        <input type="text" defaultValue={project.name} autoFocus
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleRenameProject(project.id, e.target.value); if (e.key === 'Escape') setEditingProjectId(null); }}
+                          onBlur={(e) => handleRenameProject(project.id, e.target.value)}
+                          style={{ width: '100%', fontSize: '14px', fontWeight: '600', fontFamily: "'Outfit', sans-serif", background: '#141416', border: '1px solid #00ff88', borderRadius: '4px', color: '#fff', padding: '4px 8px', outline: 'none' }}
+                        />
+                      ) : (
+                        <span>{project.name}</span>
+                      )}
+                      <span style={{ fontSize: '11px', color: '#666', flexShrink: 0, marginLeft: '8px' }}>{getProjectSessions(sessions, project.id).length} days</span>
+                    </button>
+                    {editingProjectId !== project.id && (
+                      <>
+                        <button onClick={(e) => { e.stopPropagation(); setEditingProjectId(project.id); }} style={{ ...S.btn, background: 'transparent', color: '#555', fontSize: '12px', padding: '6px' }}>✎</button>
+                        {projects.length > 1 && (
+                          <button onClick={(e) => { e.stopPropagation(); handleDeleteProject(project.id); }} style={{ ...S.btn, background: 'transparent', color: '#ff4444', fontSize: '14px', padding: '6px' }}>×</button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
